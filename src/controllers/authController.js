@@ -49,20 +49,23 @@ exports.register = async (req, res, next) => {
       fullName: name,
       email,
       password,
-      verificationCode: otp,
-      verificationCodeExpires: Date.now() + 15 * 60 * 1000, // 15 mins
+      isVerified: true, // Temp Hackathon Bypass
+      // verificationCode: otp,
+      // verificationCodeExpires: Date.now() + 15 * 60 * 1000,
     });
 
-    const emailResult = await sendVerificationEmail(user.email, otp);
-    
-    if (!emailResult.success) {
-      await User.findByIdAndDelete(user._id);
-      return res.status(500).json({ error: 'Email service unavailable. Account creation aborted.' });
-    }
+    // Temp Hackathon Bypass: Skip email sending
+    // const emailResult = await sendVerificationEmail(user.email, otp);
+    // if (!emailResult.success) { ... }
 
     res.status(201).json({
-      message: 'Registration successful. Please verify your email.',
-      email: user.email,
+      message: 'Registration successful',
+      token: generateToken(user._id),
+      user: {
+        id: user._id,
+        fullName: user.fullName,
+        email: user.email,
+      }
     });
   } catch (error) {
     next(error);
