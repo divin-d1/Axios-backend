@@ -26,19 +26,15 @@ exports.register = async (req, res, next) => {
     const userExists = await User.findOne({ email });
     if (userExists) {
       if (!userExists.isVerified) {
-        // Resend OTP if user exists but unverified
-        const otp = generateOTP();
-        userExists.verificationCode = otp;
-        userExists.verificationCodeExpires = Date.now() + 15 * 60 * 1000;
-        userExists.password = password; // update password
+        // Temp Hackathon Bypass: Auto-verify existing unverified user
+        userExists.isVerified = true;
+        userExists.password = password;
         await userExists.save();
-        
-        const emailResult = await sendVerificationEmail(userExists.email, otp);
-        if (!emailResult.success) {
-          return res.status(500).json({ error: 'Email service unavailable. OTP not sent.' });
-        }
-        
-        return res.status(200).json({ message: 'User unverified. Re-sent verification code.', email: userExists.email });
+        return res.status(200).json({
+          message: 'Registration successful',
+          token: generateToken(userExists._id),
+          user: { id: userExists._id, fullName: userExists.fullName, email: userExists.email }
+        });
       }
       return res.status(400).json({ error: 'User already exists and is verified' });
     }
@@ -118,9 +114,10 @@ exports.login = async (req, res, next) => {
     const user = await User.findOne({ email });
     if (!user) return res.status(401).json({ error: 'Invalid email or password' });
 
-    if (!user.isVerified) {
-      return res.status(403).json({ error: 'Please verify your email to login' });
-    }
+    // Temp Hackathon Bypass: Skip email verification check
+    // if (!user.isVerified) {
+    //   return res.status(403).json({ error: 'Please verify your email to login' });
+    // }
 
     const isMatch = await user.matchPassword(password);
     if (!isMatch) return res.status(401).json({ error: 'Invalid email or password' });
