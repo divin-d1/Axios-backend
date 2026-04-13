@@ -138,8 +138,7 @@ exports.forgotPassword = async (req, res, next) => {
     const user = await User.findOne({ email });
 
     if (!user) {
-      // Don't expose whether user exists
-      return res.status(200).json({ message: 'If an account exists, a reset code was sent' });
+      return res.status(404).json({ error: 'No account found with that email address.' });
     }
 
     const resetToken = generateOTP();
