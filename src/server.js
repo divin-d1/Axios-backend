@@ -9,11 +9,11 @@ const startServer = async () => {
     // Connect to MongoDB
     await connectDB();
 
-    // Start Express server
-    app.listen(PORT, () => {
+    // Start Express server explicitly binding to 0.0.0.0 for Render compatibility
+    app.listen(PORT, '0.0.0.0', () => {
       console.log(`\n Axios API Server running on port ${PORT}`);
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-      console.log(`Health check: http://localhost:${PORT}/api/health\n`);
+      console.log(`Health check: http://0.0.0.0:${PORT}/api/health\n`);
     });
   } catch (error) {
     console.error('Failed to start server:', error.message);
