@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const Job = require('../models/Job');
 const Candidate = require('../models/Candidate');
 const Company = require('../models/Company');
@@ -60,15 +61,18 @@ const triggerScreening = async (req, res, next) => {
     // Sort all results by overall score descending
     allResults.sort((a, b) => b.overallScore - a.overallScore);
 
-    // Save screening results to database
-    const screeningResults = [];
-    for (let i = 0; i < allResults.length; i++) {
-      const result = allResults[i];
-      const rank = i + 1;
-      const isShortlisted = rank <= job.shortlistSize;
+    const session = await mongoose.startSession();
+    session.startTransaction();
 
-      try {
-        const screeningResult = await ScreeningResult.create({
+    try {
+      // Save screening results to database
+      const screeningResults = [];
+      for (let i = 0; i < allResults.length; i++) {
+        const result = allResults[i];
+        const rank = i + 1;
+        const isShortlisted = rank <= job.shortlistSize;
+
+        const screeningResultArray = await ScreeningResult.create([{
           job: job._id,
           candidate: result.candidateId,
           overallScore: Math.round(result.overallScore) || 0,
@@ -85,27 +89,33 @@ const triggerScreening = async (req, res, next) => {
           reasoning: result.reasoning || '',
           skillAnalysis: result.skillAnalysis || '',
           experienceAnalysis: result.experienceAnalysis || '',
-        });
-        screeningResults.push(screeningResult);
-      } catch (error) {
-        console.error(`Error saving result for candidate ${result.candidateId}:`, error.message);
+        }], { session });
+        
+        screeningResults.push(screeningResultArray[0]);
       }
+
+      // Update job status to completed
+      job.status = 'completed';
+      job.screenedAt = new Date();
+      await job.save({ session });
+
+      await session.commitTransaction();
+      session.endSession();
+
+      res.json({
+        success: true,
+        message: `Screening completed. ${screeningResults.length} candidates evaluated, top ${job.shortlistSize} shortlisted.`,
+        data: {
+          totalEvaluated: screeningResults.length,
+          shortlistSize: job.shortlistSize,
+          results: screeningResults,
+        },
+      });
+    } catch (transactionError) {
+      await session.abortTransaction();
+      session.endSession();
+      throw transactionError;
     }
-
-    // Update job status to completed
-    job.status = 'completed';
-    job.screenedAt = new Date();
-    await job.save();
-
-    res.json({
-      success: true,
-      message: `Screening completed. ${screeningResults.length} candidates evaluated, top ${job.shortlistSize} shortlisted.`,
-      data: {
-        totalEvaluated: screeningResults.length,
-        shortlistSize: job.shortlistSize,
-        results: screeningResults,
-      },
-    });
   } catch (error) {
     next(error);
   }

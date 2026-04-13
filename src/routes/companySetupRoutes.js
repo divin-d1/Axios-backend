@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { protect } = require('../middlewares/auth');
+const mongoose = require('mongoose');
 const Company = require('../models/Company');
 const User = require('../models/User');
 
@@ -16,29 +17,41 @@ router.post('/setup', protect, async (req, res, next) => {
       return res.status(400).json({ error: 'Company name is required' });
     }
 
-    // Create company
-    const company = await Company.create({
-      name,
-      email: email || req.user.email,
-      website,
-      size,
-      industries: industries || [],
-      departments: departments || [],
-      hiringPhilosophy,
-      description,
-      specialization,
-      skills: typeof skills === 'string' ? skills.split(',').map(s => s.trim()).filter(Boolean) : (skills || []),
-    });
+    const session = await mongoose.startSession();
+    session.startTransaction();
 
-    // Link company to user
-    req.user.company = company._id;
-    await req.user.save();
+    try {
+      // Create company
+      const company = await Company.create([{
+        name,
+        email: email || req.user.email,
+        website,
+        size,
+        industries: industries || [],
+        departments: departments || [],
+        hiringPhilosophy,
+        description,
+        specialization,
+        skills: typeof skills === 'string' ? skills.split(',').map(s => s.trim()).filter(Boolean) : (skills || []),
+      }], { session });
 
-    res.status(201).json({
-      success: true,
-      message: 'Company profile created and linked to your account',
-      company,
-    });
+      // Link company to user
+      req.user.company = company[0]._id;
+      await req.user.save({ session });
+      
+      await session.commitTransaction();
+      session.endSession();
+
+      res.status(201).json({
+        success: true,
+        message: 'Company profile created and linked to your account',
+        company: company[0],
+      });
+    } catch (transactionError) {
+      await session.abortTransaction();
+      session.endSession();
+      throw transactionError;
+    }
   } catch (error) {
     next(error);
   }

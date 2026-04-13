@@ -25,10 +25,24 @@ const addCandidate = async (req, res, next) => {
       return res.status(403).json({ error: 'Access denied — job does not belong to your company' });
     }
 
-    const candidate = await Candidate.create(req.body);
-    await Job.findByIdAndUpdate(candidate.job, { $inc: { totalApplicants: 1 } });
+    const session = await mongoose.startSession();
+    session.startTransaction();
 
-    res.status(201).json({ success: true, data: candidate });
+    try {
+      const candidateArray = await Candidate.create([{ ...req.body, job: job._id }], { session });
+      const candidate = candidateArray[0];
+
+      await Job.findByIdAndUpdate(job._id, { $inc: { totalApplicants: 1 } }, { session });
+
+      await session.commitTransaction();
+      session.endSession();
+
+      res.status(201).json({ success: true, data: candidate });
+    } catch (transactionError) {
+      await session.abortTransaction();
+      session.endSession();
+      throw transactionError;
+    }
   } catch (error) {
     next(error);
   }
@@ -166,21 +180,35 @@ const uploadResume = async (req, res, next) => {
     const cloudinaryResult = await uploadToCloudinary();
     const parsedData = await parseResume(resumeText);
 
-    const candidate = await Candidate.create({
-      ...parsedData,
-      job: job._id,
-      source: 'resume-upload',
-      resumeFile: cloudinaryResult.secure_url,
-      rawResumeText: resumeText.substring(0, 5000),
-    });
+    const session = await mongoose.startSession();
+    session.startTransaction();
 
-    await Job.findByIdAndUpdate(job._id, { $inc: { totalApplicants: 1 } });
+    try {
+      const candidateArray = await Candidate.create([{
+        ...parsedData,
+        job: job._id,
+        source: 'resume-upload',
+        resumeFile: cloudinaryResult.secure_url,
+        rawResumeText: resumeText.substring(0, 5000),
+      }], { session });
+      
+      const candidate = candidateArray[0];
 
-    res.status(201).json({
-      success: true,
-      message: 'Resume parsed and candidate created successfully',
-      data: candidate,
-    });
+      await Job.findByIdAndUpdate(job._id, { $inc: { totalApplicants: 1 } }, { session });
+
+      await session.commitTransaction();
+      session.endSession();
+
+      res.status(201).json({
+        success: true,
+        message: 'Resume parsed and candidate created successfully',
+        data: candidate,
+      });
+    } catch (transactionError) {
+      await session.abortTransaction();
+      session.endSession();
+      throw transactionError;
+    }
   } catch (error) {
     next(error);
   }
@@ -286,11 +314,23 @@ const deleteCandidate = async (req, res, next) => {
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    await ScreeningResult.deleteMany({ candidate: candidate._id });
-    await Candidate.findByIdAndDelete(candidate._id);
-    await Job.findByIdAndUpdate(candidate.job, { $inc: { totalApplicants: -1 } });
+    const session = await mongoose.startSession();
+    session.startTransaction();
 
-    res.json({ success: true, data: {} });
+    try {
+      await ScreeningResult.deleteMany({ candidate: candidate._id }, { session });
+      await Candidate.findByIdAndDelete(candidate._id, { session });
+      await Job.findByIdAndUpdate(candidate.job, { $inc: { totalApplicants: -1 } }, { session });
+
+      await session.commitTransaction();
+      session.endSession();
+
+      res.json({ success: true, data: {} });
+    } catch (transactionError) {
+      await session.abortTransaction();
+      session.endSession();
+      throw transactionError;
+    }
   } catch (error) {
     next(error);
   }
