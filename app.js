@@ -15,9 +15,11 @@ const emailRoutes = require('./src/routes/emailRoutes');
 const dashboardRoutes = require('./src/routes/dashboardRoutes');
 const authRoutes = require('./src/routes/authRoutes');
 const configRoutes = require('./src/routes/configRoutes');
+const companySetupRoutes = require('./src/routes/companySetupRoutes');
 
 // Import middleware
 const { errorHandler, notFound } = require('./src/middlewares/errorHandler');
+const { protect } = require('./src/middlewares/auth');
 
 const app = express();
 
@@ -59,14 +61,20 @@ if (process.env.NODE_ENV !== 'production') {
 
 
 // ─── API Routes ────────────────────────────────────────────────
-app.use('/api/companies', companyRoutes);
-app.use('/api/jobs', jobRoutes);
-app.use('/api/candidates', candidateRoutes);
-app.use('/api/screening', screeningRoutes);
-app.use('/api/emails', emailRoutes);
-app.use('/api/dashboard', dashboardRoutes);
+// Public routes (no auth required)
 app.use('/api/auth', authRoutes);
 app.use('/api/config', configRoutes);
+
+// Company setup (protected internally)
+app.use('/api/company', companySetupRoutes);
+
+// Protected routes (require valid JWT)
+app.use('/api/companies', protect, companyRoutes);
+app.use('/api/jobs', protect, jobRoutes);
+app.use('/api/candidates', protect, candidateRoutes);
+app.use('/api/screening', protect, screeningRoutes);
+app.use('/api/emails', protect, emailRoutes);
+app.use('/api/dashboard', protect, dashboardRoutes);
 
 // ─── Health Check ──────────────────────────────────────────────
 app.get('/api/health', (req, res) => {
