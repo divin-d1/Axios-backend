@@ -60,8 +60,8 @@ const candidateSchema = new mongoose.Schema({
 
   // 3.7 Availability
   availability: {
-    status: { type: String, enum: ['Available', 'Open to Opportunities', 'Not Available'], default: 'Available' },
-    type: { type: String, enum: ['Full-time', 'Part-time', 'Contract'], default: 'Full-time' },
+    status: { type: String, default: 'Available' },
+    type: { type: String, default: 'Full-time' },
     startDate: { type: String } // Format: YYYY-MM-DD
   },
 
@@ -87,7 +87,7 @@ const candidateSchema = new mongoose.Schema({
   },
   source: {
     type: String,
-    enum: ['manual', 'csv-upload', 'resume-upload', 'platform'],
+    enum: ['manual', 'csv-upload', 'excel-upload', 'resume-upload', 'platform'],
     default: 'platform'
   }
 }, { timestamps: true });
