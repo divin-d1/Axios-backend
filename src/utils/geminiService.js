@@ -24,27 +24,49 @@ const getModel = () => {
         'X-Title': 'Axios AI Recruitment',
       } : { 'Content-Type': 'application/json' };
 
-      const body = isOpenRouter ? {
-        model: 'google/gemini-2.0-pro-exp-02-05:free',
-        messages: [{ role: 'user', content: prompt }]
-      } : {
-        contents: [{ role: 'user', parts: [{ text: prompt }] }]
-      };
+      let textOutput = null;
+      
+      const openRouterModels = [
+        'google/gemini-2.0-flash-lite-preview-02-05:free',
+        'google/gemini-2.0-flash-thinking-exp:free',
+        'meta-llama/llama-3.3-70b-instruct:free',
+        'google/gemini-2.5-flash'
+      ];
 
-      const response = await fetch(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body)
-      });
-
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error?.message || data.error?.message || 'AI Generation Failed');
+      if (isOpenRouter) {
+        let success = false;
+        let lastError = null;
+        for (const targetModel of openRouterModels) {
+          const body = {
+            model: targetModel,
+            messages: [{ role: 'user', content: prompt }]
+          };
+          const response = await fetch(url, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(body)
+          });
+          const data = await response.json();
+          if (response.ok && data.choices?.[0]?.message?.content) {
+            textOutput = data.choices[0].message.content;
+            success = true;
+            break;
+          } else {
+            lastError = data.error?.message;
+          }
+        }
+        if (!success) throw new Error(lastError || 'All OpenRouter fallbacks failed');
+      } else {
+        const body = { contents: [{ role: 'user', parts: [{ text: prompt }] }] };
+        const response = await fetch(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(body)
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error?.message || 'Google AI Generation Failed');
+        textOutput = data.candidates[0].content.parts[0].text;
       }
-
-      const textOutput = isOpenRouter 
-        ? data.choices[0].message.content 
-        : data.candidates[0].content.parts[0].text;
 
       // Mock the official Google SDK response structure
       return { response: { text: () => textOutput } };
