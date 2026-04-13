@@ -33,7 +33,11 @@ exports.register = async (req, res, next) => {
         userExists.password = password; // update password
         await userExists.save();
         
-        await sendVerificationEmail(userExists.email, otp);
+        const emailResult = await sendVerificationEmail(userExists.email, otp);
+        if (!emailResult.success) {
+          return res.status(500).json({ error: 'Email service unavailable. OTP not sent.' });
+        }
+        
         return res.status(200).json({ message: 'User unverified. Re-sent verification code.', email: userExists.email });
       }
       return res.status(400).json({ error: 'User already exists and is verified' });
@@ -49,7 +53,12 @@ exports.register = async (req, res, next) => {
       verificationCodeExpires: Date.now() + 15 * 60 * 1000, // 15 mins
     });
 
-    await sendVerificationEmail(user.email, otp);
+    const emailResult = await sendVerificationEmail(user.email, otp);
+    
+    if (!emailResult.success) {
+      await User.findByIdAndDelete(user._id);
+      return res.status(500).json({ error: 'Email service unavailable. Account creation aborted.' });
+    }
 
     res.status(201).json({
       message: 'Registration successful. Please verify your email.',
