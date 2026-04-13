@@ -123,7 +123,7 @@ const getScreeningResults = async (req, res, next) => {
     }
 
     // Verify job belongs to user's company
-    const job = await Job.findOne({ _id: req.params.jobId, company: req.user.company });
+    const job = await Job.findOne({ _id: req.params.jobId, company: req.user.company }).populate('company', 'name');
     if (!job) {
       return res.status(403).json({ error: 'Access denied' });
     }
@@ -131,8 +131,6 @@ const getScreeningResults = async (req, res, next) => {
     const results = await ScreeningResult.find(filter)
       .populate('candidate', 'name email phone skills totalYearsExperience source location')
       .sort({ rank: 1 });
-
-    const job = await Job.findById(req.params.jobId).populate('company', 'name');
 
     res.json({
       success: true,
