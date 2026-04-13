@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const Candidate = require('../models/Candidate');
 const Job = require('../models/Job');
 const ScreeningResult = require('../models/ScreeningResult');
@@ -93,15 +94,28 @@ const bulkUploadCandidates = async (req, res, next) => {
       source: ext === 'csv' ? 'csv-upload' : 'excel-upload',
     }));
 
-    const created = await Candidate.insertMany(candidates, { ordered: false });
-    await Job.findByIdAndUpdate(job._id, { $inc: { totalApplicants: created.length } });
+    const session = await mongoose.startSession();
+    session.startTransaction();
 
-    res.status(201).json({
-      success: true,
-      message: `Successfully imported ${created.length} candidates`,
-      count: created.length,
-      data: created,
-    });
+    try {
+      const created = await Candidate.insertMany(candidates, { session });
+      await Job.findByIdAndUpdate(job._id, { $inc: { totalApplicants: created.length } }, { session });
+      
+      await session.commitTransaction();
+      session.endSession();
+
+      res.status(201).json({
+        success: true,
+        message: `Successfully imported ${created.length} candidates. Complete transaction successful!`,
+        count: created.length,
+        data: created,
+      });
+    } catch (transactionError) {
+      await session.abortTransaction();
+      session.endSession();
+      throw new Error(`Upload transaction failed and rolled back safely. Database unaltered. Error: ${transactionError.message}`);
+    }
+
   } catch (error) {
     next(error);
   }
