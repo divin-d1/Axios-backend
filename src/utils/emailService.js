@@ -130,9 +130,73 @@ const generateAcknowledgmentEmail = ({ candidateName, jobTitle, companyName }) =
   };
 };
 
+/**
+ * Generate and send Verification OTP email
+ */
+const sendVerificationEmail = async (to, otp) => {
+  const html = `
+    <div style="font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 40px 20px; text-align: center; background-color: #fafafa; border-radius: 16px;">
+      <div style="background-color: #09090b; width: 48px; height: 48px; border-radius: 50%; margin: 0 auto 24px auto; display: flex; align-items: center; justify-content: center;">
+        <h2 style="color: white; margin: 0; font-size: 20px; line-height: 48px;">A</h2>
+      </div>
+      <h1 style="color: #09090b; font-size: 24px; font-weight: 700; margin-bottom: 16px;">Verify your email</h1>
+      <p style="color: #71717a; font-size: 15px; line-height: 1.5; margin-bottom: 32px;">
+        You're almost in. We just need to verify your email address to complete your Axios account setup. Copy the security code below to proceed.
+      </p>
+      
+      <div style="background-color: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; padding: 24px; margin-bottom: 32px;">
+        <p style="color: #09090b; font-size: 32px; font-weight: 800; letter-spacing: 8px; margin: 0;">${otp}</p>
+      </div>
+      
+      <p style="color: #a1a1aa; font-size: 13px; line-height: 1.5;">
+        This code will expire in 15 minutes. If you didn't request this email, you can safely ignore it.
+      </p>
+    </div>
+  `;
+  
+  return sendEmail({
+    to,
+    subject: "Your Axios Verification Code",
+    html,
+  });
+};
+
+/**
+ * Generate and send Reset Password email
+ */
+const sendResetPasswordEmail = async (to, resetCode) => {
+  const html = `
+    <div style="font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 40px 20px; text-align: center; background-color: #fafafa; border-radius: 16px;">
+      <div style="background-color: #09090b; width: 48px; height: 48px; border-radius: 50%; margin: 0 auto 24px auto; display: flex; align-items: center; justify-content: center;">
+        <h2 style="color: white; margin: 0; font-size: 20px; line-height: 48px;">A</h2>
+      </div>
+      <h1 style="color: #09090b; font-size: 24px; font-weight: 700; margin-bottom: 16px;">Reset Password</h1>
+      <p style="color: #71717a; font-size: 15px; line-height: 1.5; margin-bottom: 32px;">
+        We received a request to reset your password. Use the security code below to set up a new password for your Axios account.
+      </p>
+      
+      <div style="background-color: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; padding: 24px; margin-bottom: 32px;">
+        <p style="color: #09090b; font-size: 32px; font-weight: 800; letter-spacing: 8px; margin: 0;">${resetCode}</p>
+      </div>
+      
+      <p style="color: #a1a1aa; font-size: 13px; line-height: 1.5;">
+        This code will expire in 15 minutes. If you didn't request a password reset, you can safely ignore it.
+      </p>
+    </div>
+  `;
+  
+  return sendEmail({
+    to,
+    subject: "Reset your Axios Password",
+    html,
+  });
+};
+
 module.exports = {
   sendEmail,
   sendBatchEmails,
   generateShortlistEmail,
   generateAcknowledgmentEmail,
+  sendVerificationEmail,
+  sendResetPasswordEmail,
 };

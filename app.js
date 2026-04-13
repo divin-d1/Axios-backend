@@ -13,6 +13,10 @@ const candidateRoutes = require('./src/routes/candidateRoutes');
 const screeningRoutes = require('./src/routes/screeningRoutes');
 const emailRoutes = require('./src/routes/emailRoutes');
 const dashboardRoutes = require('./src/routes/dashboardRoutes');
+const authRoutes = require('./src/routes/authRoutes');
+const configRoutes = require('./src/routes/configRoutes');
+const jobRoutes = require('./src/routes/jobRoutes');
+const companyRoutes = require('./src/routes/companyRoutes');
 
 // Import middleware
 const { errorHandler, notFound } = require('./src/middlewares/errorHandler');
@@ -60,6 +64,10 @@ app.use('/api/candidates', candidateRoutes);
 app.use('/api/screening', screeningRoutes);
 app.use('/api/emails', emailRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/api/config', configRoutes);
+app.use('/api/jobs', jobRoutes);
+app.use('/api/company', companyRoutes);
 
 // ─── Health Check ──────────────────────────────────────────────
 app.get('/api/health', (req, res) => {
