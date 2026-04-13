@@ -46,7 +46,12 @@ const parsePDF = async (fileBuffer) => {
 };
 
 /**
- * Normalizes flat spreadsheet data into the nested Umurava Hackathon Spec
+ * Normalizes flat spreadsheet data into the nested Umurava Hackathon Candidate Schema.
+ * Handles both standard column names AND the hackathon test CSV format:
+ *   id, full_name, email, phone, location, linkedin, github, years_of_experience,
+ *   summary, current_title, education_degree, education_institution, graduation_year,
+ *   skills, work_history, projects, certifications, languages_spoken, availability,
+ *   preferred_work_mode, expected_salary_usd, open_to_relocation, portfolio_url, cover_note
  */
 const normalizeCandidateRow = (row) => {
   const findValue = (...keys) => {
@@ -64,7 +69,7 @@ const normalizeCandidateRow = (row) => {
     return value.split(/[,;|]/).map(s => s.trim()).filter(Boolean);
   };
 
-  // Safe name splitting
+  // --- Name splitting ---
   const rawName = findValue('name', 'fullname', 'full_name', 'candidatename');
   let first = findValue('firstname', 'first_name');
   let last = findValue('lastname', 'last_name');
@@ -75,61 +80,134 @@ const normalizeCandidateRow = (row) => {
     last = parts.slice(1).join(' ') || '.';
   }
 
+  // --- Skills ---
   const rawSkills = parseList(findValue('skills', 'technicalskills', 'tools'));
+  const yearsExp = parseInt(findValue('yearsofexperience', 'years_of_experience', 'experience')) || 0;
   const skillsObjects = rawSkills.map(skill => ({
     name: skill,
-    level: 'Intermediate',
-    yearsOfExperience: 0
+    level: yearsExp >= 10 ? 'Expert' : yearsExp >= 5 ? 'Advanced' : yearsExp >= 2 ? 'Intermediate' : 'Beginner',
+    yearsOfExperience: yearsExp
   }));
 
-  const experienceRole = findValue('jobtitle', 'currentrole', 'position', 'title');
-  const experienceArray = experienceRole ? [{
-    company: findValue('company', 'employer', 'organization', 'currentcompany'),
-    role: experienceRole,
-    startDate: findValue('startdate', 'start_date', 'joined'),
-    endDate: findValue('enddate', 'end_date') || 'Present',
-    description: findValue('responsibilities', 'duties'),
-    technologies: parseList(findValue('technologies', 'stack')),
-    isCurrent: !findValue('enddate', 'end_date')
-  }] : [];
+  // --- Work History ---
+  // Hackathon CSV: "Role at Company (YYYY-YYYY) | Role at Company (YYYY-YYYY)"
+  const workHistoryRaw = findValue('workhistory', 'work_history', 'employment');
+  let experienceArray = [];
+  if (workHistoryRaw) {
+    const entries = workHistoryRaw.split(/\s*\|\s*/);
+    experienceArray = entries.map(entry => {
+      // "Software Developer at Slack (2023-2024)"
+      const match = entry.match(/^(.+?)\s+at\s+(.+?)\s*\((\d{4})-(\d{4})\)\s*$/);
+      if (match) {
+        return {
+          company: match[2].trim(),
+          role: match[1].trim(),
+          startDate: `${match[3]}-01`,
+          endDate: parseInt(match[4]) >= new Date().getFullYear() ? 'Present' : `${match[4]}-12`,
+          description: '',
+          technologies: [],
+          isCurrent: parseInt(match[4]) >= new Date().getFullYear()
+        };
+      }
+      return { company: '', role: entry.trim(), startDate: '', endDate: '', description: '', technologies: [], isCurrent: false };
+    }).filter(e => e.role);
+  } else {
+    const experienceRole = findValue('jobtitle', 'currentrole', 'position', 'title', 'currenttitle', 'current_title');
+    if (experienceRole) {
+      experienceArray = [{
+        company: findValue('company', 'employer', 'organization', 'currentcompany'),
+        role: experienceRole,
+        startDate: findValue('startdate', 'start_date', 'joined'),
+        endDate: findValue('enddate', 'end_date') || 'Present',
+        description: findValue('responsibilities', 'duties'),
+        technologies: parseList(findValue('technologies', 'stack')),
+        isCurrent: !findValue('enddate', 'end_date')
+      }];
+    }
+  }
+
+  // --- Projects ---
+  // Hackathon CSV: "Project description 1 || Project description 2"
+  const projectsRaw = findValue('projects', 'project');
+  let projectsArray = [];
+  if (projectsRaw) {
+    const entries = projectsRaw.split(/\s*\|\|\s*/);
+    projectsArray = entries.map((desc, i) => ({
+      name: `Project ${i + 1}`,
+      description: desc.trim(),
+      technologies: [],
+      role: 'Developer',
+      link: '',
+      startDate: '',
+      endDate: ''
+    }));
+  }
+
+  // --- Certifications ---
+  const certsRaw = findValue('certifications', 'certs', 'certificates');
+  let certsArray = [];
+  if (certsRaw) {
+    certsArray = parseList(certsRaw).map(c => ({
+      name: c,
+      issuer: '',
+      issueDate: ''
+    }));
+  }
+
+  // --- Languages ---
+  const langRaw = findValue('languages', 'spokenlanguages', 'languagesspoken', 'languages_spoken');
+  const languagesArray = parseList(langRaw).map(l => ({
+    name: l,
+    proficiency: 'Conversational'
+  }));
+
+  // --- Education ---
+  const degree = findValue('degree', 'education', 'qualification', 'educationdegree', 'education_degree');
+  const institution = findValue('university', 'school', 'college', 'institution', 'educationinstitution', 'education_institution');
+  const gradYear = parseInt(findValue('graduationyear', 'gradyear', 'year', 'graduation_year')) || 2022;
+  let educationArray = [];
+  if (degree || institution) {
+    educationArray = [{
+      institution: institution || 'Unknown',
+      degree: degree || 'Unknown',
+      fieldOfStudy: findValue('field', 'major', 'study', 'fieldofstudy') || '',
+      startYear: gradYear - 4,
+      endYear: gradYear
+    }];
+  }
+
+  // --- Availability ---
+  const availRaw = findValue('availability', 'noticePeriod', 'notice');
+  const workMode = findValue('preferredworkmode', 'preferred_work_mode', 'workmode');
 
   return {
     firstName: first || 'Unknown',
     lastName: last || 'Unknown',
-    email: findValue('email', 'emailaddress'),
-    headline: findValue('headline', 'title', 'jobtitle') || 'Candidate',
-    bio: findValue('bio', 'summary', 'about'),
+    email: findValue('email', 'emailaddress', 'e-mail'),
+    headline: findValue('headline', 'currenttitle', 'current_title', 'title', 'jobtitle', 'summary') || 'Candidate',
+    bio: findValue('bio', 'summary', 'about', 'covernote', 'cover_note') || '',
     location: findValue('location', 'city', 'address', 'country') || 'Not specified',
     
     skills: skillsObjects,
-    languages: parseList(findValue('languages', 'spokenlanguages')).map(l => ({
-      name: l,
-      proficiency: 'Conversational'
-    })),
+    languages: languagesArray,
     
     experience: experienceArray,
     
-    education: findValue('education', 'degree', 'qualification') ? [{
-      institution: findValue('university', 'school', 'college', 'institution'),
-      degree: findValue('degree', 'education', 'qualification'),
-      fieldOfStudy: findValue('field', 'major', 'study'),
-      startYear: 2018, // defaults
-      endYear: parseInt(findValue('graduationyear', 'gradyear', 'year')) || 2022
-    }] : [],
+    education: educationArray,
     
-    certifications: [],
-    projects: [],
+    certifications: certsArray,
+    projects: projectsArray,
     
     availability: {
-      status: 'Open to Opportunities',
-      type: 'Full-time',
+      status: availRaw ? 'Open to Opportunities' : 'Available',
+      type: workMode || 'Full-time',
       startDate: ''
     },
     
     socialLinks: {
       linkedin: findValue('linkedin', 'linkedinurl'),
       github: findValue('github', 'githuburl'),
-      portfolio: findValue('portfolio', 'website')
+      portfolio: findValue('portfolio', 'website', 'portfoliourl', 'portfolio_url')
     }
   };
 };
