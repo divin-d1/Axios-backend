@@ -1,7 +1,7 @@
 const Candidate = require('../models/Candidate');
 const Job = require('../models/Job');
 const ScreeningResult = require('../models/ScreeningResult');
-const { parseCSV, parseExcel, parsePDF } = require('../utils/fileParser');
+const { parseCSV, parseExcel, parsePDF, parseCSVRaw, parseExcelRaw, applyAIMappingPattern, normalizeCandidateRow } = require('../utils/fileParser');
 const { parseResume } = require('../utils/geminiService');
 const cloudinary = require('../config/cloudinary');
 const streamifier = require('streamifier');
@@ -69,7 +69,6 @@ const bulkUploadCandidates = async (req, res, next) => {
     // 2. Use AI to auto-map the dynamic columns to our candidate schema
     // We sample the first 2 rows so Gemini has context but we save tokens
     const { analyzeCSVStructure } = require('../utils/geminiService');
-    const { normalizeCandidateRow } = require('../utils/fileParser');
     
     let candidateData = [];
     const aiMapping = await analyzeCSVStructure(rawData.slice(0, 2));
