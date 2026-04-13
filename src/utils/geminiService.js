@@ -1,15 +1,55 @@
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-
+// Swapped to OpenRouter using native fetch to bypass Gemini strict limits
 const initGemini = () => {
-  if (!process.env.GEMINI_API_KEY) {
-    throw new Error('GEMINI_API_KEY is not configured');
+  const apiKey = process.env.OPENROUTER_API_KEY || process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error('API key is not configured in environment variables');
   }
-  return new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+  return apiKey;
 };
 
 const getModel = () => {
-  const genAI = initGemini();
-  return genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+  const apiKey = initGemini();
+  
+  return {
+    generateContent: async (prompt) => {
+      // Determine if we should hit OpenRouter or fallback to raw Google (Based on key prefix)
+      // OpenRouter keys start with sk-or-
+      const isOpenRouter = apiKey.startsWith('sk-or-');
+      const url = isOpenRouter ? 'https://openrouter.ai/api/v1/chat/completions' : `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+      
+      const headers = isOpenRouter ? {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://axios-recruitment.com',
+        'X-Title': 'Axios AI Recruitment',
+      } : { 'Content-Type': 'application/json' };
+
+      const body = isOpenRouter ? {
+        model: 'google/gemini-2.0-flash-exp:free',
+        messages: [{ role: 'user', content: prompt }]
+      } : {
+        contents: [{ role: 'user', parts: [{ text: prompt }] }]
+      };
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body)
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error?.message || data.error?.message || 'AI Generation Failed');
+      }
+
+      const textOutput = isOpenRouter 
+        ? data.choices[0].message.content 
+        : data.candidates[0].content.parts[0].text;
+
+      // Mock the official Google SDK response structure
+      return { response: { text: () => textOutput } };
+    }
+  };
 };
 
 /**
