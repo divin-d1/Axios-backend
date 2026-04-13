@@ -27,10 +27,10 @@ const getModel = () => {
       let textOutput = null;
       
       const openRouterModels = [
-        'google/gemini-2.0-flash-lite-preview-02-05:free',
-        'google/gemini-2.0-flash-thinking-exp:free',
-        'meta-llama/llama-3.3-70b-instruct:free',
-        'google/gemini-2.5-flash'
+        'google/gemini-2.5-flash:free',
+        'google/gemini-2.5-flash-lite:free',
+        'google/gemini-3-flash-preview:free',
+        'google/gemini-2.0-flash-exp:free'
       ];
 
       if (isOpenRouter) {
