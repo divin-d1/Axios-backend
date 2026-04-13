@@ -157,8 +157,13 @@ const getScreeningResultDetail = async (req, res, next) => {
       });
 
     if (!result) {
-      res.status(404);
-      throw new Error('Screening result not found');
+      return res.status(404).json({ error: 'Screening result not found' });
+    }
+
+    // Verify the job belongs to user's company
+    const jobCompanyId = result.job?.company?._id || result.job?.company;
+    if (String(jobCompanyId) !== String(req.user.company)) {
+      return res.status(403).json({ error: 'Access denied' });
     }
 
     res.json({ success: true, data: result });

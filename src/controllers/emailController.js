@@ -91,9 +91,14 @@ const sendCustomEmails = async (req, res, next) => {
       throw new Error('candidateIds, subject, and htmlContent are required');
     }
 
-    const candidates = await Candidate.find({ _id: { $in: candidateIds } });
+    const candidates = await Candidate.find({ _id: { $in: candidateIds } }).populate('job', 'company');
+
+    // Filter to only candidates whose job belongs to user's company
+    const ownCandidates = candidates.filter(c => 
+      c.job && String(c.job.company) === String(req.user.company)
+    );
     
-    const recipients = candidates
+    const recipients = ownCandidates
       .filter(c => c.email)
       .map(c => ({
         email: c.email,
@@ -122,8 +127,12 @@ const previewEmail = async (req, res, next) => {
     const job = await Job.findById(jobId).populate('company');
     
     if (!job) {
-      res.status(404);
-      throw new Error('Job not found');
+      return res.status(404).json({ error: 'Job not found' });
+    }
+
+    // Verify job belongs to user's company
+    if (String(job.company._id || job.company) !== String(req.user.company)) {
+      return res.status(403).json({ error: 'Access denied' });
     }
 
     let emailContent;
