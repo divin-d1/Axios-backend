@@ -50,19 +50,42 @@ const bulkUploadCandidates = async (req, res, next) => {
     const fileBuffer = req.file.buffer;
     const ext = req.file.originalname.split('.').pop().toLowerCase();
 
-    let candidateData;
+    // 1. First extract RAW flat JSON from the spreadsheet
+    let rawData = [];
     if (ext === 'csv') {
-      candidateData = await parseCSV(fileBuffer);
+      rawData = await parseCSVRaw(fileBuffer);  // Add this exported util
     } else if (ext === 'xlsx' || ext === 'xls') {
-      candidateData = parseExcel(fileBuffer);
+      rawData = parseExcelRaw(fileBuffer);      // Add this exported util
     } else {
       res.status(400);
       throw new Error('Unsupported file format. Use CSV or Excel.');
     }
 
+    if (!rawData.length) {
+      res.status(400);
+      throw new Error('No data found in the file');
+    }
+
+    // 2. Use AI to auto-map the dynamic columns to our candidate schema
+    // We sample the first 2 rows so Gemini has context but we save tokens
+    const { analyzeCSVStructure } = require('../utils/geminiService');
+    const { normalizeCandidateRow } = require('../utils/fileParser');
+    
+    let candidateData = [];
+    const aiMapping = await analyzeCSVStructure(rawData.slice(0, 2));
+
+    // 3. Process all 3,000+ rows instantly using the AI blueprint or fallback
+    candidateData = rawData.map(row => {
+        if (aiMapping && aiMapping.mappings) {
+           return applyAIMappingPattern(row, aiMapping.mappings);
+        } else {
+           return normalizeCandidateRow(row); 
+        }
+    }).filter(c => c.firstName && c.lastName);
+
     if (!candidateData.length) {
       res.status(400);
-      throw new Error('No valid candidate data found in the file');
+      throw new Error('No valid candidates could be mapped from the file structure.');
     }
 
     const candidates = candidateData.map(c => ({

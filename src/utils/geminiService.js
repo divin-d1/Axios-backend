@@ -210,9 +210,63 @@ const generateCandidateSummary = async (candidate, job) => {
   }
 };
 
+/**
+ * Analyzes the structure of an unknown CSV using a small sample,
+ * returning a mapping configuration that can be safely applied to 10k+ rows locally.
+ */
+const analyzeCSVStructure = async (sampleRows) => {
+  const model = getModel();
+  try {
+    const prompt = `
+You are an intelligent data-mapping assistant.
+I have a CSV file with applicants, but the column names and formats are unknown. 
+Here are the first few rows (as JSON):
+
+${JSON.stringify(sampleRows, null, 2)}
+
+Given our required Candidate Schema below, analyze the CSV data and determine the best mapping.
+Candidate Schema requirement:
+- firstName (string)
+- lastName (string)
+- email (string)
+- headline (string)
+- location (string)
+- skills (array of strings)
+
+Return ONLY a valid JSON object showing mapping configuration. Use the exact JSON structure below, filling in the "csv_column_name" where applicable. If a direct column doesn't exist, leave it null. If a column contains the full name, put it in "fullNameColumn". 
+
+{
+  "mappings": {
+    "firstNameColumn": "csv_column_name",
+    "lastNameColumn": "csv_column_name",
+    "fullNameColumn": "csv_column_name",
+    "emailColumn": "csv_column_name",
+    "locationColumn": "csv_column_name",
+    "headlineColumn": "csv_column_name",
+    "skillsColumn": "csv_column_name",
+    "projectsColumn": "csv_column_name",
+    "educationColumn": "csv_column_name",
+    "languagesColumn": "csv_column_name",
+    "certificationsColumn": "csv_column_name",
+    "workHistoryColumn": "csv_column_name"
+  }
+}
+`;
+
+    const result = await model.generateContent(prompt);
+    const text = result.response.text();
+    const cleanText = text.replace(/```json\n?|\n?```/g, '').trim();
+    return JSON.parse(cleanText);
+  } catch (error) {
+    console.error('Gemini CSV mapping error:', error);
+    return null;
+  }
+};
+
 module.exports = {
   initGemini,
   parseResume,
   screenCandidates,
   generateCandidateSummary,
+  analyzeCSVStructure
 };

@@ -2,37 +2,38 @@ const csvParser = require('csv-parser');
 const XLSX = require('xlsx');
 const { Readable } = require('stream');
 
-const parseCSV = (fileBuffer) => {
+const parseCSVRaw = (fileBuffer) => {
   return new Promise((resolve, reject) => {
     const results = [];
     const stream = Readable.from(fileBuffer);
     
     stream
       .pipe(csvParser())
-      .on('data', (row) => {
-        const candidate = normalizeCandidateRow(row);
-        if (candidate.firstName && candidate.lastName) {
-          results.push(candidate);
-        }
-      })
+      .on('data', (row) => results.push(row))
       .on('end', () => resolve(results))
       .on('error', (error) => reject(new Error(`CSV parsing error: ${error.message}`)));
   });
 };
 
-const parseExcel = (fileBuffer) => {
+const parseCSV = async (fileBuffer) => {
+  const raw = await parseCSVRaw(fileBuffer);
+  return raw.map(r => normalizeCandidateRow(r)).filter(c => c.firstName && c.lastName);
+};
+
+const parseExcelRaw = (fileBuffer) => {
   try {
     const workbook = XLSX.read(fileBuffer, { type: 'buffer' });
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
-    const rawData = XLSX.utils.sheet_to_json(worksheet);
-    
-    return rawData
-      .map(row => normalizeCandidateRow(row))
-      .filter(c => c.firstName && c.lastName);
+    return XLSX.utils.sheet_to_json(worksheet);
   } catch (error) {
     throw new Error(`Excel parsing error: ${error.message}`);
   }
+};
+
+const parseExcel = (fileBuffer) => {
+  const raw = parseExcelRaw(fileBuffer);
+  return raw.map(r => normalizeCandidateRow(r)).filter(c => c.firstName && c.lastName);
 };
 
 const parsePDF = async (fileBuffer) => {
@@ -212,4 +213,64 @@ const normalizeCandidateRow = (row) => {
   };
 };
 
-module.exports = { parseCSV, parseExcel, parsePDF, normalizeCandidateRow };
+/**
+ * Applies the Gemini AI mapping JSON to a raw CSV row.
+ */
+const applyAIMappingPattern = (row, mapping) => {
+  const getValue = (colName) => colName && row[colName] ? String(row[colName]).trim() : '';
+
+  // Fallback to normalized extraction if AI mapping is missing key fields
+  if (!mapping.firstNameColumn && !mapping.fullNameColumn) {
+    return normalizeCandidateRow(row);
+  }
+
+  let firstName = getValue(mapping.firstNameColumn);
+  let lastName = getValue(mapping.lastNameColumn);
+  
+  if (!firstName && !lastName && mapping.fullNameColumn) {
+    const fullName = getValue(mapping.fullNameColumn);
+    const parts = fullName.split(' ');
+    firstName = parts[0] || 'Unknown';
+    lastName = parts.slice(1).join(' ') || '.';
+  }
+
+  // Same strategy for skills, etc. We use the existing logic but read from the exact column mapped by AI
+  const parseList = (value) => value ? value.split(/[,;|]/).map(s => s.trim()).filter(Boolean) : [];
+  
+  const rawSkills = parseList(getValue(mapping.skillsColumn));
+  const skillsObjects = rawSkills.map(skill => ({
+    name: skill,
+    level: 'Intermediate',
+    yearsOfExperience: 0
+  }));
+
+  let experienceArray = [];
+  const workHistory = getValue(mapping.workHistoryColumn);
+  if (workHistory) {
+      // Just fallback to the strong regex parser we built in normalizeCandidateRow 
+      // but feeding it the specific AI-detected column value
+      const mockRow = { workhistory: workHistory, jobtitle: getValue(mapping.headlineColumn) };
+      const normalized = normalizeCandidateRow(mockRow);
+      experienceArray = normalized.experience;
+  }
+
+  return {
+    firstName: firstName || 'Unknown',
+    lastName: lastName || 'Unknown',
+    email: getValue(mapping.emailColumn) || 'no-email@example.com',
+    headline: getValue(mapping.headlineColumn) || 'Candidate',
+    location: getValue(mapping.locationColumn) || 'Not specified',
+    bio: '',
+    skills: skillsObjects,
+    experience: experienceArray,
+    languages: parseList(getValue(mapping.languagesColumn)).map(l => ({ name: l, proficiency: 'Conversational' })),
+    education: [],
+    certifications: [],
+    projects: [],
+    availability: { status: 'Open to Opportunities', type: 'Full-time', startDate: '' },
+    socialLinks: {}
+  };
+};
+
+module.exports = { parseCSV, parseExcel, parseCSVRaw, parseExcelRaw, parsePDF, normalizeCandidateRow, applyAIMappingPattern };
+
