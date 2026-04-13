@@ -81,21 +81,11 @@ const bulkUploadCandidates = async (req, res, next) => {
       throw new Error('No data found in the file');
     }
 
-    // 2. Use AI to auto-map the dynamic columns to our candidate schema
-    // We sample the first 2 rows so Gemini has context but we save tokens
-    const { analyzeCSVStructure } = require('../utils/geminiService');
+    // 2. Map the columns natively using our strict deterministic schema parser 
+    // (Bypasses Gemini to avoid 429 Rate Limits during massive CSV ingestion)
+    const { normalizeCandidateRow } = require('../utils/fileParser');
     
-    let candidateData = [];
-    const aiMapping = await analyzeCSVStructure(rawData.slice(0, 2));
-
-    // 3. Process all 3,000+ rows instantly using the AI blueprint or fallback
-    candidateData = rawData.map(row => {
-        if (aiMapping && aiMapping.mappings) {
-           return applyAIMappingPattern(row, aiMapping.mappings);
-        } else {
-           return normalizeCandidateRow(row); 
-        }
-    }).filter(c => c.firstName && c.lastName);
+    let candidateData = rawData.map(row => normalizeCandidateRow(row)).filter(c => c.firstName && c.lastName);
 
     if (!candidateData.length) {
       res.status(400);
