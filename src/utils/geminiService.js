@@ -25,7 +25,7 @@ const getModel = () => {
       } : { 'Content-Type': 'application/json' };
 
       const body = isOpenRouter ? {
-        model: 'google/gemini-2.0-flash-exp:free',
+        model: 'google/gemini-2.0-pro-exp-02-05:free',
         messages: [{ role: 'user', content: prompt }]
       } : {
         contents: [{ role: 'user', parts: [{ text: prompt }] }]
