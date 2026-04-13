@@ -1,4 +1,8 @@
 const nodemailer = require('nodemailer');
+const dns = require('dns');
+
+// Fix for Node >= 17 IPv6 routing bugs on Render (forces IPv4 first)
+dns.setDefaultResultOrder('ipv4first');
 
 /**
  * Create email transporter from environment config
