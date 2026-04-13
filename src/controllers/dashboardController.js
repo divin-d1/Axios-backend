@@ -3,15 +3,30 @@ const Candidate = require('../models/Candidate');
 const Company = require('../models/Company');
 const ScreeningResult = require('../models/ScreeningResult');
 
-// @desc    Get dashboard statistics
+// @desc    Get dashboard statistics (scoped to user's company)
 // @route   GET /api/dashboard
 const getDashboardStats = async (req, res, next) => {
   try {
-    const { companyId } = req.query;
-    const jobFilter = companyId ? { company: companyId } : {};
+    const companyId = req.user.company;
+
+    if (!companyId) {
+      return res.json({
+        success: true,
+        data: {
+          overview: { totalJobs: 0, totalCandidates: 0, totalScreenings: 0, activeJobs: 0, completedJobs: 0 },
+          recentJobs: [],
+          recentScreenings: [],
+        },
+      });
+    }
+
+    const jobFilter = { company: companyId };
+
+    // Get company job IDs for candidate/screening scoping
+    const companyJobs = await Job.find(jobFilter).select('_id');
+    const jobIds = companyJobs.map(j => j._id);
 
     const [
-      totalCompanies,
       totalJobs,
       totalCandidates,
       totalScreenings,
@@ -20,10 +35,9 @@ const getDashboardStats = async (req, res, next) => {
       recentJobs,
       recentScreenings,
     ] = await Promise.all([
-      Company.countDocuments(),
       Job.countDocuments(jobFilter),
-      Candidate.countDocuments(),
-      ScreeningResult.countDocuments(),
+      Candidate.countDocuments({ job: { $in: jobIds } }),
+      ScreeningResult.countDocuments({ job: { $in: jobIds } }),
       Job.countDocuments({ ...jobFilter, status: { $in: ['open', 'screening'] } }),
       Job.countDocuments({ ...jobFilter, status: 'completed' }),
       Job.find(jobFilter)
@@ -31,35 +45,17 @@ const getDashboardStats = async (req, res, next) => {
         .sort({ createdAt: -1 })
         .limit(5)
         .select('title status totalApplicants createdAt screenedAt shortlistSize'),
-      ScreeningResult.find({ isShortlisted: true })
+      ScreeningResult.find({ job: { $in: jobIds }, isShortlisted: true })
         .populate('candidate', 'name email')
-        .populate({ path: 'job', select: 'title', populate: { path: 'company', select: 'name' } })
+        .populate({ path: 'job', select: 'title' })
         .sort({ createdAt: -1 })
         .limit(10),
-    ]);
-
-    // Source distribution
-    const sourceDistribution = await Candidate.aggregate([
-      { $group: { _id: '$source', count: { $sum: 1 } } },
-    ]);
-
-    // Score distribution for completed screenings
-    const scoreDistribution = await ScreeningResult.aggregate([
-      {
-        $bucket: {
-          groupBy: '$overallScore',
-          boundaries: [0, 20, 40, 60, 80, 101],
-          default: 'Other',
-          output: { count: { $sum: 1 } },
-        },
-      },
     ]);
 
     res.json({
       success: true,
       data: {
         overview: {
-          totalCompanies,
           totalJobs,
           totalCandidates,
           totalScreenings,
@@ -68,8 +64,6 @@ const getDashboardStats = async (req, res, next) => {
         },
         recentJobs,
         recentScreenings,
-        sourceDistribution,
-        scoreDistribution,
       },
     });
   } catch (error) {

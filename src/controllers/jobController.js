@@ -2,25 +2,28 @@ const Job = require('../models/Job');
 const Candidate = require('../models/Candidate');
 const ScreeningResult = require('../models/ScreeningResult');
 
-// @desc    Create a new job
+// @desc    Create a new job (scoped to user's company)
 // @route   POST /api/jobs
 const createJob = async (req, res, next) => {
   try {
-    const job = await Job.create(req.body);
+    // Force job to belong to user's company — ignore any company ID from client
+    const job = await Job.create({
+      ...req.body,
+      company: req.user.company,
+    });
     res.status(201).json({ success: true, data: job });
   } catch (error) {
     next(error);
   }
 };
 
-// @desc    Get all jobs with optional filters
+// @desc    Get jobs for user's company only
 // @route   GET /api/jobs
 const getJobs = async (req, res, next) => {
   try {
-    const { company, status, page = 1, limit = 20 } = req.query;
-    const filter = {};
+    const { status, page = 1, limit = 20 } = req.query;
+    const filter = { company: req.user.company };
     
-    if (company) filter.company = company;
     if (status) filter.status = status;
 
     const jobs = await Job.find(filter)
@@ -43,17 +46,15 @@ const getJobs = async (req, res, next) => {
   }
 };
 
-// @desc    Get single job with stats
+// @desc    Get single job (only if it belongs to user's company)
 // @route   GET /api/jobs/:id
 const getJob = async (req, res, next) => {
   try {
-    const job = await Job.findById(req.params.id).populate('company');
+    const job = await Job.findOne({ _id: req.params.id, company: req.user.company }).populate('company');
     if (!job) {
-      res.status(404);
-      throw new Error('Job not found');
+      return res.status(404).json({ error: 'Job not found' });
     }
 
-    // Get candidate count
     const candidateCount = await Candidate.countDocuments({ job: job._id });
     const screeningCount = await ScreeningResult.countDocuments({ job: job._id });
 
@@ -71,18 +72,20 @@ const getJob = async (req, res, next) => {
   }
 };
 
-// @desc    Update job
+// @desc    Update job (only if it belongs to user's company)
 // @route   PUT /api/jobs/:id
 const updateJob = async (req, res, next) => {
   try {
-    const job = await Job.findByIdAndUpdate(
-      req.params.id,
+    // Prevent changing company ownership
+    delete req.body.company;
+    
+    const job = await Job.findOneAndUpdate(
+      { _id: req.params.id, company: req.user.company },
       req.body,
       { new: true, runValidators: true }
     );
     if (!job) {
-      res.status(404);
-      throw new Error('Job not found');
+      return res.status(404).json({ error: 'Job not found or access denied' });
     }
     res.json({ success: true, data: job });
   } catch (error) {
@@ -90,17 +93,15 @@ const updateJob = async (req, res, next) => {
   }
 };
 
-// @desc    Delete job and related data
+// @desc    Delete job (only if it belongs to user's company)
 // @route   DELETE /api/jobs/:id
 const deleteJob = async (req, res, next) => {
   try {
-    const job = await Job.findById(req.params.id);
+    const job = await Job.findOne({ _id: req.params.id, company: req.user.company });
     if (!job) {
-      res.status(404);
-      throw new Error('Job not found');
+      return res.status(404).json({ error: 'Job not found or access denied' });
     }
 
-    // Delete related candidates and screening results
     await Candidate.deleteMany({ job: job._id });
     await ScreeningResult.deleteMany({ job: job._id });
     await Job.findByIdAndDelete(job._id);

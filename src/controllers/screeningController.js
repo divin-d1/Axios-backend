@@ -8,10 +8,9 @@ const { screenCandidates } = require('../utils/geminiService');
 // @route   POST /api/screening/:jobId
 const triggerScreening = async (req, res, next) => {
   try {
-    const job = await Job.findById(req.params.jobId);
+    const job = await Job.findOne({ _id: req.params.jobId, company: req.user.company });
     if (!job) {
-      res.status(404);
-      throw new Error('Job not found');
+      return res.status(404).json({ error: 'Job not found or access denied' });
     }
 
     // Get company context
@@ -121,6 +120,12 @@ const getScreeningResults = async (req, res, next) => {
     
     if (shortlistOnly === 'true') {
       filter.isShortlisted = true;
+    }
+
+    // Verify job belongs to user's company
+    const job = await Job.findOne({ _id: req.params.jobId, company: req.user.company });
+    if (!job) {
+      return res.status(403).json({ error: 'Access denied' });
     }
 
     const results = await ScreeningResult.find(filter)

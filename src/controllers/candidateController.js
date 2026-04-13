@@ -1,18 +1,30 @@
 const Candidate = require('../models/Candidate');
 const Job = require('../models/Job');
+const ScreeningResult = require('../models/ScreeningResult');
 const { parseCSV, parseExcel, parsePDF } = require('../utils/fileParser');
 const { parseResume } = require('../utils/geminiService');
 const cloudinary = require('../config/cloudinary');
 const streamifier = require('streamifier');
 const path = require('path');
 
-// @desc    Add single candidate manually
+/**
+ * Helper: verify a jobId belongs to the user's company
+ */
+const verifyJobOwnership = async (jobId, userCompanyId) => {
+  const job = await Job.findOne({ _id: jobId, company: userCompanyId });
+  return job;
+};
+
+// @desc    Add single candidate manually (only to user's own job)
 // @route   POST /api/candidates
 const addCandidate = async (req, res, next) => {
   try {
-    const candidate = await Candidate.create(req.body);
+    const job = await verifyJobOwnership(req.body.job, req.user.company);
+    if (!job) {
+      return res.status(403).json({ error: 'Access denied — job does not belong to your company' });
+    }
 
-    // Update job applicant count
+    const candidate = await Candidate.create(req.body);
     await Job.findByIdAndUpdate(candidate.job, { $inc: { totalApplicants: 1 } });
 
     res.status(201).json({ success: true, data: candidate });
@@ -21,7 +33,7 @@ const addCandidate = async (req, res, next) => {
   }
 };
 
-// @desc    Bulk upload candidates via CSV/Excel
+// @desc    Bulk upload candidates (only to user's own job)
 // @route   POST /api/candidates/upload/:jobId
 const bulkUploadCandidates = async (req, res, next) => {
   try {
@@ -30,11 +42,9 @@ const bulkUploadCandidates = async (req, res, next) => {
       throw new Error('Please upload a CSV or Excel file');
     }
 
-    const jobId = req.params.jobId;
-    const job = await Job.findById(jobId);
+    const job = await verifyJobOwnership(req.params.jobId, req.user.company);
     if (!job) {
-      res.status(404);
-      throw new Error('Job not found');
+      return res.status(403).json({ error: 'Access denied — job does not belong to your company' });
     }
 
     const fileBuffer = req.file.buffer;
@@ -55,17 +65,14 @@ const bulkUploadCandidates = async (req, res, next) => {
       throw new Error('No valid candidate data found in the file');
     }
 
-    // Add job reference and source to each candidate
     const candidates = candidateData.map(c => ({
       ...c,
-      job: jobId,
-      source: ext === '.csv' ? 'csv-upload' : 'excel-upload',
+      job: job._id,
+      source: ext === 'csv' ? 'csv-upload' : 'excel-upload',
     }));
 
     const created = await Candidate.insertMany(candidates, { ordered: false });
-
-    // Update job applicant count
-    await Job.findByIdAndUpdate(jobId, { $inc: { totalApplicants: created.length } });
+    await Job.findByIdAndUpdate(job._id, { $inc: { totalApplicants: created.length } });
 
     res.status(201).json({
       success: true,
@@ -78,7 +85,7 @@ const bulkUploadCandidates = async (req, res, next) => {
   }
 };
 
-// @desc    Upload resume PDF and parse with AI
+// @desc    Upload resume PDF (only to user's own job)
 // @route   POST /api/candidates/resume/:jobId
 const uploadResume = async (req, res, next) => {
   try {
@@ -87,16 +94,13 @@ const uploadResume = async (req, res, next) => {
       throw new Error('Please upload a PDF resume');
     }
 
-    const jobId = req.params.jobId;
-    const job = await Job.findById(jobId);
+    const job = await verifyJobOwnership(req.params.jobId, req.user.company);
     if (!job) {
-      res.status(404);
-      throw new Error('Job not found');
+      return res.status(403).json({ error: 'Access denied — job does not belong to your company' });
     }
 
     const fileBuffer = req.file.buffer;
 
-    // Extract text from PDF buffer
     let resumeText;
     try {
       resumeText = await parsePDF(fileBuffer);
@@ -107,10 +111,9 @@ const uploadResume = async (req, res, next) => {
 
     if (!resumeText || resumeText.trim().length < 50) {
       res.status(400);
-      throw new Error('Could not extract sufficient text from the PDF. Please ensure it is not a scanned image.');
+      throw new Error('Could not extract sufficient text from the PDF.');
     }
 
-    // Upload to Cloudinary via stream
     const uploadToCloudinary = () => {
       return new Promise((resolve, reject) => {
         const cld_upload_stream = cloudinary.uploader.upload_stream(
@@ -125,21 +128,17 @@ const uploadResume = async (req, res, next) => {
     };
 
     const cloudinaryResult = await uploadToCloudinary();
-
-    // Parse resume with Gemini AI
     const parsedData = await parseResume(resumeText);
 
-    // Create candidate with parsed data
     const candidate = await Candidate.create({
       ...parsedData,
-      job: jobId,
+      job: job._id,
       source: 'resume-upload',
       resumeFile: cloudinaryResult.secure_url,
-      rawResumeText: resumeText.substring(0, 5000), // Store first 5000 chars
+      rawResumeText: resumeText.substring(0, 5000),
     });
 
-    // Update job applicant count
-    await Job.findByIdAndUpdate(jobId, { $inc: { totalApplicants: 1 } });
+    await Job.findByIdAndUpdate(job._id, { $inc: { totalApplicants: 1 } });
 
     res.status(201).json({
       success: true,
@@ -151,12 +150,17 @@ const uploadResume = async (req, res, next) => {
   }
 };
 
-// @desc    Get candidates for a job
+// @desc    Get candidates for a job (scoped to user's company)
 // @route   GET /api/candidates/job/:jobId
 const getCandidatesByJob = async (req, res, next) => {
   try {
+    const job = await verifyJobOwnership(req.params.jobId, req.user.company);
+    if (!job) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
     const { page = 1, limit = 50, search } = req.query;
-    const filter = { job: req.params.jobId };
+    const filter = { job: job._id };
 
     if (search) {
       filter.$or = [
@@ -173,23 +177,22 @@ const getCandidatesByJob = async (req, res, next) => {
 
     const total = await Candidate.countDocuments(filter);
 
-    res.json({
-      success: true,
-      count: candidates.length,
-      total,
-      data: candidates,
-    });
+    res.json({ success: true, count: candidates.length, total, data: candidates });
   } catch (error) {
     next(error);
   }
 };
 
-// @desc    Get all candidates across all jobs
+// @desc    Get all candidates across user's company jobs only
 // @route   GET /api/candidates
 const getAllCandidates = async (req, res, next) => {
   try {
+    // First get all job IDs belonging to user's company
+    const companyJobs = await Job.find({ company: req.user.company }).select('_id');
+    const jobIds = companyJobs.map(j => j._id);
+
     const { page = 1, limit = 50, search } = req.query;
-    const filter = {};
+    const filter = { job: { $in: jobIds } };
 
     if (search) {
       filter.$or = [
@@ -206,40 +209,45 @@ const getAllCandidates = async (req, res, next) => {
 
     const total = await Candidate.countDocuments(filter);
 
-    res.json({
-      success: true,
-      count: candidates.length,
-      total,
-      data: candidates,
-    });
+    res.json({ success: true, count: candidates.length, total, data: candidates });
   } catch (error) {
     next(error);
   }
 };
 
-// @desc    Get single candidate
+// @desc    Get single candidate (verify belongs to user's company job)
 // @route   GET /api/candidates/:id
 const getCandidate = async (req, res, next) => {
   try {
     const candidate = await Candidate.findById(req.params.id).populate('job', 'title company');
     if (!candidate) {
-      res.status(404);
-      throw new Error('Candidate not found');
+      return res.status(404).json({ error: 'Candidate not found' });
     }
+
+    // Verify this candidate's job belongs to user's company
+    const job = await Job.findOne({ _id: candidate.job, company: req.user.company });
+    if (!job) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
     res.json({ success: true, data: candidate });
   } catch (error) {
     next(error);
   }
 };
 
-// @desc    Delete candidate
+// @desc    Delete candidate (verify belongs to user's company)
 // @route   DELETE /api/candidates/:id
 const deleteCandidate = async (req, res, next) => {
   try {
     const candidate = await Candidate.findById(req.params.id);
     if (!candidate) {
-      res.status(404);
-      throw new Error('Candidate not found');
+      return res.status(404).json({ error: 'Candidate not found' });
+    }
+
+    const job = await Job.findOne({ _id: candidate.job, company: req.user.company });
+    if (!job) {
+      return res.status(403).json({ error: 'Access denied' });
     }
 
     await ScreeningResult.deleteMany({ candidate: candidate._id });
@@ -251,8 +259,6 @@ const deleteCandidate = async (req, res, next) => {
     next(error);
   }
 };
-
-const ScreeningResult = require('../models/ScreeningResult');
 
 module.exports = {
   addCandidate,

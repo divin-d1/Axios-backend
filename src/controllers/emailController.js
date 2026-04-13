@@ -13,8 +13,12 @@ const sendShortlistEmails = async (req, res, next) => {
 
     const job = await Job.findById(jobId).populate('company');
     if (!job) {
-      res.status(404);
-      throw new Error('Job not found');
+      return res.status(404).json({ error: 'Job not found' });
+    }
+
+    // Verify job belongs to user's company
+    if (String(job.company._id || job.company) !== String(req.user.company)) {
+      return res.status(403).json({ error: 'Access denied' });
     }
 
     // Get shortlisted results
