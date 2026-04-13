@@ -71,9 +71,9 @@ const normalizeCandidateRow = (row) => {
   };
 
   // --- Name splitting ---
-  const rawName = findValue('name', 'fullname', 'full_name', 'candidatename');
-  let first = findValue('firstname', 'first_name');
-  let last = findValue('lastname', 'last_name');
+  const rawName = findValue('name', 'fullname', 'full_name', 'candidatename', 'applicantname', 'full name', 'applicant');
+  let first = findValue('firstname', 'first_name', 'first name', 'fname', 'givenname');
+  let last = findValue('lastname', 'last_name', 'last name', 'lname', 'surname', 'familyname');
 
   if (!first && !last && rawName) {
     const parts = rawName.split(' ');
@@ -82,8 +82,8 @@ const normalizeCandidateRow = (row) => {
   }
 
   // --- Skills ---
-  const rawSkills = parseList(findValue('skills', 'technicalskills', 'tools'));
-  const yearsExp = parseInt(findValue('yearsofexperience', 'years_of_experience', 'experience')) || 0;
+  const rawSkills = parseList(findValue('skills', 'technicalskills', 'tools', 'corecompetencies', 'competencies', 'technologies', 'stack'));
+  const yearsExp = parseInt(findValue('yearsofexperience', 'years_of_experience', 'experience', 'totalexperience', 'yearsexp')) || 0;
   const skillsObjects = rawSkills.map(skill => ({
     name: skill,
     level: yearsExp >= 10 ? 'Expert' : yearsExp >= 5 ? 'Advanced' : yearsExp >= 2 ? 'Intermediate' : 'Beginner',
@@ -92,7 +92,7 @@ const normalizeCandidateRow = (row) => {
 
   // --- Work History ---
   // Hackathon CSV: "Role at Company (YYYY-YYYY) | Role at Company (YYYY-YYYY)"
-  const workHistoryRaw = findValue('workhistory', 'work_history', 'employment');
+  const workHistoryRaw = findValue('workhistory', 'work_history', 'employment', 'experience', 'jobhistory', 'work experience');
   let experienceArray = [];
   if (workHistoryRaw) {
     const entries = workHistoryRaw.split(/\s*\|\s*/);
@@ -184,10 +184,10 @@ const normalizeCandidateRow = (row) => {
   return {
     firstName: first || 'Unknown',
     lastName: last || 'Unknown',
-    email: findValue('email', 'emailaddress', 'e-mail'),
-    headline: findValue('headline', 'currenttitle', 'current_title', 'title', 'jobtitle', 'summary') || 'Candidate',
-    bio: findValue('bio', 'summary', 'about', 'covernote', 'cover_note') || '',
-    location: findValue('location', 'city', 'address', 'country') || 'Not specified',
+    email: findValue('email', 'emailaddress', 'e-mail', 'contact', 'contactemail', 'mail'),
+    headline: findValue('headline', 'currenttitle', 'current_title', 'title', 'jobtitle', 'summary', 'role', 'currentrole', 'profession', 'position'),
+    bio: findValue('bio', 'summary', 'about', 'covernote', 'cover_note', 'profile', 'objective'),
+    location: findValue('location', 'city', 'address', 'country', 'region', 'state'),
     
     skills: skillsObjects,
     languages: languagesArray,
