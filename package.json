@@ -2,7 +2,7 @@
   "name": "axios-backend",
   "version": "1.0.0",
   "description": "Axios AI Recruitment System — Backend API",
-  "main": "app.js",
+  "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
