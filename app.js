@@ -21,6 +21,9 @@ const { errorHandler, notFound } = require('./src/middlewares/errorHandler');
 
 const app = express();
 
+// Trust proxy for Render deployment rate-limiting
+app.set('trust proxy', 1);
+
 // ─── Security Middleware ───────────────────────────────────────
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' },
