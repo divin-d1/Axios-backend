@@ -81,11 +81,25 @@ const bulkUploadCandidates = async (req, res, next) => {
       throw new Error('No data found in the file');
     }
 
-    // 2. Map the columns natively using our strict deterministic schema parser 
-    // (Bypasses Gemini to avoid 429 Rate Limits during massive CSV ingestion)
+    // 2. Intelligently map CSV structure using Gemini AI
+    const { analyzeCSVStructure } = require('../utils/geminiService');
+    let aiMappings = null;
+    try {
+      if (rawData.length > 0) {
+        console.log("Analyzing unknown CSV structure using Gemini AI...");
+        const mappingResult = await analyzeCSVStructure(rawData.slice(0, 3));
+        if (mappingResult && mappingResult.mappings) {
+          aiMappings = mappingResult.mappings;
+          console.log("Gemini AI successfully extracted dynamic schema mappings.");
+        }
+      }
+    } catch (err) {
+      console.warn("Gemini CSV Analysis failed or rate-limited. Falling back to semantic fuzzy-parser.");
+    }
+
     const { normalizeCandidateRow } = require('../utils/fileParser');
     
-    let candidateData = rawData.map(row => normalizeCandidateRow(row)).filter(c => c.firstName && c.lastName);
+    let candidateData = rawData.map(row => normalizeCandidateRow(row, aiMappings)).filter(c => c.firstName && c.lastName);
 
     if (!candidateData.length) {
       res.status(400);

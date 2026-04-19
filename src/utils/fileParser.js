@@ -54,7 +54,9 @@ const parsePDF = async (fileBuffer) => {
  *   skills, work_history, projects, certifications, languages_spoken, availability,
  *   preferred_work_mode, expected_salary_usd, open_to_relocation, portfolio_url, cover_note
  */
-const normalizeCandidateRow = (row) => {
+const normalizeCandidateRow = (row, aiMappings = null) => {
+  const getMapped = (key) => aiMappings && aiMappings[key] && row[aiMappings[key]] ? String(row[aiMappings[key]]).trim() : '';
+
   const findValue = (...keys) => {
     for (const key of keys) {
       const found = Object.keys(row).find(k => 
@@ -70,10 +72,10 @@ const normalizeCandidateRow = (row) => {
     return value.split(/[,;|]/).map(s => s.trim()).filter(Boolean);
   };
 
-  // --- Name splitting ---
-  const rawName = findValue('name', 'fullname', 'full_name', 'candidatename', 'applicantname', 'full name', 'applicant');
-  let first = findValue('firstname', 'first_name', 'first name', 'fname', 'givenname');
-  let last = findValue('lastname', 'last_name', 'last name', 'lname', 'surname', 'familyname');
+  // --- Name splitting (Using AI Mappings first, then fuzzy fallback) ---
+  const rawName = getMapped('fullNameColumn') || findValue('name', 'fullname', 'full_name', 'candidatename', 'applicantname', 'full name', 'applicant');
+  let first = getMapped('firstNameColumn') || findValue('firstname', 'first_name', 'first name', 'fname', 'givenname');
+  let last = getMapped('lastNameColumn') || findValue('lastname', 'last_name', 'last name', 'lname', 'surname', 'familyname');
 
   if (!first && !last && rawName) {
     const parts = rawName.split(' ');
@@ -82,7 +84,7 @@ const normalizeCandidateRow = (row) => {
   }
 
   // --- Skills ---
-  const rawSkills = parseList(findValue('skills', 'technicalskills', 'tools', 'corecompetencies', 'competencies', 'technologies', 'stack'));
+  const rawSkills = parseList(getMapped('skillsColumn') || findValue('skills', 'technicalskills', 'tools', 'corecompetencies', 'competencies', 'technologies', 'stack'));
   const yearsExp = parseInt(findValue('yearsofexperience', 'years_of_experience', 'experience', 'totalexperience', 'yearsexp')) || 0;
   const skillsObjects = rawSkills.map(skill => ({
     name: skill,
