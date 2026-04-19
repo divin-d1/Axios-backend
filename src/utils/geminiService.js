@@ -1,77 +1,15 @@
-// Swapped to OpenRouter using native fetch to bypass Gemini strict limits
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+
 const initGemini = () => {
-  const apiKey = process.env.OPENROUTER_API_KEY || process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error('API key is not configured in environment variables');
+  if (!process.env.GEMINI_API_KEY) {
+    throw new Error('GEMINI_API_KEY is not configured');
   }
-  return apiKey;
+  return new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 };
 
 const getModel = () => {
-  const apiKey = initGemini();
-  
-  return {
-    generateContent: async (prompt) => {
-      // Determine if we should hit OpenRouter or fallback to raw Google (Based on key prefix)
-      // OpenRouter keys start with sk-or-
-      const isOpenRouter = apiKey.startsWith('sk-or-');
-      const url = isOpenRouter ? 'https://openrouter.ai/api/v1/chat/completions' : `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
-      
-      const headers = isOpenRouter ? {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://axios-recruitment.com',
-        'X-Title': 'Axios AI Recruitment',
-      } : { 'Content-Type': 'application/json' };
-
-      let textOutput = null;
-      
-      const openRouterModels = [
-        'google/gemini-2.0-flash-lite-preview-02-05:free',
-        'google/gemini-2.0-pro-exp-02-05:free',
-        'google/gemini-2.0-flash-thinking-exp:free',
-        'meta-llama/llama-3.3-70b-instruct:free'
-      ];
-
-      if (isOpenRouter) {
-        let success = false;
-        let lastError = null;
-        for (const targetModel of openRouterModels) {
-          const body = {
-            model: targetModel,
-            messages: [{ role: 'user', content: prompt }]
-          };
-          const response = await fetch(url, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(body)
-          });
-          const data = await response.json();
-          if (response.ok && data.choices?.[0]?.message?.content) {
-            textOutput = data.choices[0].message.content;
-            success = true;
-            break;
-          } else {
-            lastError = data.error?.message;
-          }
-        }
-        if (!success) throw new Error(lastError || 'All OpenRouter fallbacks failed');
-      } else {
-        const body = { contents: [{ role: 'user', parts: [{ text: prompt }] }] };
-        const response = await fetch(url, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify(body)
-        });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error?.message || 'Google AI Generation Failed');
-        textOutput = data.candidates[0].content.parts[0].text;
-      }
-
-      // Mock the official Google SDK response structure
-      return { response: { text: () => textOutput } };
-    }
-  };
+  const genAI = initGemini();
+  return genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 };
 
 /**
