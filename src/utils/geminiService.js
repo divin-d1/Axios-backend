@@ -126,60 +126,45 @@ const screenCandidates = async (job, candidates, company) => {
   const model = getModel();
 
   const prompt = `
-    You are an AI Recruitment Intelligence Engine for the Umurava platform. 
-    Evaluate these candidates against the job requirements using the specified scoring weights.
-    You must mitigate bias: ignore gender, race, age, and name. Focus purely on demonstrated skills and experience.
+    Role: AI Recruiter. 
+    Evaluate candidates vs job. Mitigate bias: ignore name/gender/age. Focus on skills/experience.
 
-    JOB ROLE: ${job.title}
-    DESCRIPTION: ${job.description}
-    REQUIRED SKILLS: ${job.requiredSkills.join(', ')}
-    PREFERRED SKILLS: ${job.preferredSkills.join(', ')}
-    MINIMUM EXPERIENCE (YRS): ${job.minExperience}
-    
-    STRICTNESS LEVEL: ${job.rankingStrictness} 
-    (If strict: heavily penalize missing requirements. If flexible: reward potential and transferrable skills).
+    JOB: ${job.title}
+    REQ SKILLS: ${job.requiredSkills.join(', ')}
+    PREF SKILLS: ${job.preferredSkills.join(', ')}
+    MIN YRS: ${job.minExperience}
+    STRICTNESS: ${job.rankingStrictness} (Strict=penalize missing. Flexible=reward potential).
+    COMPANY: ${company.name} | ${company.industry} | ${company.hiringPhilosophy}
 
-    COMPANY CONTEXT:
-    Name: ${company.name}
-    Industry: ${company.industry}
-    Hiring Philosophy: ${company.hiringPhilosophy}
+    WEIGHTS (%):
+    Skill:${job.scoringWeights.skillMatch} | Exp:${job.scoringWeights.experienceDepth} | Proj:${job.scoringWeights.projectRelevance} | Cred:${job.scoringWeights.credibility} | Fit:${job.scoringWeights.companyFit}
 
-    SCORING WEIGHTS (Must add to 100%):
-    - Skill Match: ${job.scoringWeights.skillMatch}%
-    - Experience Depth: ${job.scoringWeights.experienceDepth}%
-    - Project Relevance: ${job.scoringWeights.projectRelevance}%
-    - Credibility: ${job.scoringWeights.credibility}%
-    - Company Fit: ${job.scoringWeights.companyFit}%
+    TARGET SIZE: ${job.shortlistSize} 
 
-    TARGET SHORTLIST SIZE: ${job.shortlistSize} 
-
-    CANDIDATES TO EVALUATE:
+    CANDIDATES:
     ${JSON.stringify(candidates.map(c => ({
       id: c._id, 
       headline: c.headline,
       experience: c.experience,
       skills: c.skills,
       projects: c.projects
-    })), null, 2)}
+    })))}
 
-    OUTPUT INSTRUCTIONS:
-    Return pure JSON, strictly formatted as an array of objects matching this exact structure:
-    [
-      {
-        "candidateId": "matching candidate id",
-        "overallScore": 85.5,
-        "skillMatchScore": 90,
-        "experienceScore": 80,
-        "projectScore": 85,
-        "credibilityScore": 75,
-        "companyFitScore": 90,
-        "rank": 1,
-        "strengths": ["Strength 1", "Strength 2"],
-        "weaknesses": ["Gap 1", "Gap 2"],
-        "reasoning": "A comprehensive 3-5 sentence justification explaining how they map to the job requirements and company philosophy."
-      }
-    ]
-    Sort the output array by 'overallScore' descending. Ensure sizes matches up to the SHORTLIST SIZE limit at maximum.
+    OUTPUT STRICT JSON ARRAY ONLY:
+    [{
+      "candidateId": "id",
+      "overallScore": 85.5,
+      "skillMatchScore": 90,
+      "experienceScore": 80,
+      "projectScore": 85,
+      "credibilityScore": 75,
+      "companyFitScore": 90,
+      "rank": 1,
+      "strengths": ["short strength1"],
+      "weaknesses": ["short gap1"],
+      "reasoning": "CAVEMAN SPEAK. 10 words max. Telegraphic style. Drop filler. e.g: 'Strong React. No CI/CD. Fit culture.'"
+    }]
+    Sort overallScore desc. Max length: ${job.shortlistSize}. No markdown. No backticks.
   `;
 
   try {
@@ -200,7 +185,7 @@ const screenCandidates = async (job, candidates, company) => {
  */
 const generateCandidateSummary = async (candidate, job) => {
   const model = getModel();
-  const prompt = `Give a 3-sentence recruiter summary for why ${candidate.headline} is a match for ${job.title}.`;
+  const prompt = `Caveman mode: why ${candidate.headline} match ${job.title}. Telegraphic style. Max 10 words. Drop filler.`;
   
   try {
     const result = await model.generateContent(prompt);
@@ -218,39 +203,12 @@ const analyzeCSVStructure = async (sampleRows) => {
   const model = getModel();
   try {
     const prompt = `
-You are an intelligent data-mapping assistant.
-I have a CSV file with applicants, but the column names and formats are unknown. 
-Here are the first few rows (as JSON):
+Role: AI data-mapper. Map unknown CSV structure to strict Candidate Schema.
+Sample: ${JSON.stringify(sampleRows)}
 
-${JSON.stringify(sampleRows, null, 2)}
-
-Given our required Candidate Schema below, analyze the CSV data and determine the best mapping.
-Candidate Schema requirement:
-- firstName (string)
-- lastName (string)
-- email (string)
-- headline (string)
-- location (string)
-- skills (array of strings)
-
-Return ONLY a valid JSON object showing mapping configuration. Use the exact JSON structure below, filling in the "csv_column_name" where applicable. If a direct column doesn't exist, leave it null. If a column contains the full name, put it in "fullNameColumn". 
-
-{
-  "mappings": {
-    "firstNameColumn": "csv_column_name",
-    "lastNameColumn": "csv_column_name",
-    "fullNameColumn": "csv_column_name",
-    "emailColumn": "csv_column_name",
-    "locationColumn": "csv_column_name",
-    "headlineColumn": "csv_column_name",
-    "skillsColumn": "csv_column_name",
-    "projectsColumn": "csv_column_name",
-    "educationColumn": "csv_column_name",
-    "languagesColumn": "csv_column_name",
-    "certificationsColumn": "csv_column_name",
-    "workHistoryColumn": "csv_column_name"
-  }
-}
+Return STRICT JSON mapping ONLY:
+{ "mappings": { "firstNameColumn": "csv_col", "lastNameColumn": "csv_col", "fullNameColumn": "csv_col", "emailColumn": "csv_col", "locationColumn": "csv_col", "headlineColumn": "csv_col", "skillsColumn": "csv_col", "workHistoryColumn": "csv_col" } }
+If col missing, null. Full name -> fullNameColumn. No markdown.
 `;
 
     const result = await model.generateContent(prompt);
