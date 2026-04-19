@@ -35,12 +35,58 @@ const triggerScreening = async (req, res, next) => {
     // Clear previous screening results for this job
     await ScreeningResult.deleteMany({ job: job._id });
 
-    // Process candidates in batches for large numbers
-    const BATCH_SIZE = 20;
-    let allResults = [];
+    // ----------------------------------------------------
+    // NATIVE PRE-FILTERING (Lazy Evaluation Strategy)
+    // ----------------------------------------------------
+    // We completely bypass the Gemini API for candidates who don't have ANY
+    // overlapping keywords natively to save massive API token costs.
+    const requiredKeywords = job.requiredSkills.map(s => s.toLowerCase());
+    
+    const viableCandidates = [];
+    const automaticallyRejectedResults = [];
 
-    for (let i = 0; i < candidates.length; i += BATCH_SIZE) {
-      const batch = candidates.slice(i, i + BATCH_SIZE);
+    candidates.forEach(candidate => {
+      // Squash candidate info into a searchable string block
+      const candidateString = `
+        ${candidate.headline} 
+        ${candidate.skills.map(s => s.name || s).join(' ')} 
+        ${JSON.stringify(candidate.experience)}
+      `.toLowerCase();
+
+      // Check if they share at least 20% of required keywords natively
+      let matchedCount = 0;
+      requiredKeywords.forEach(keyword => {
+        if (candidateString.includes(keyword)) matchedCount++;
+      });
+      
+      const threshold = Math.max(1, Math.floor(requiredKeywords.length * 0.2));
+
+      if (matchedCount >= threshold || requiredKeywords.length === 0) {
+        viableCandidates.push(candidate);
+      } else {
+        automaticallyRejectedResults.push({
+          candidateId: candidate._id,
+          overallScore: 10,
+          skillMatchScore: 5,
+          experienceScore: 10,
+          projectScore: 10,
+          credibilityScore: 10,
+          companyFitScore: 10,
+          strengths: [],
+          weaknesses: ['Failed native fast-filter keywords'],
+          reasoning: 'Auto-rejected by native pre-filter: Does not possess minimum expected keyword footprint.'
+        });
+      }
+    });
+
+    console.log(`Pre-filter complete. Viable: ${viableCandidates.length}, Auto-Rejected natively: ${automaticallyRejectedResults.length}`);
+
+    // Process ONLY viable candidates in batches for large numbers
+    const BATCH_SIZE = 20;
+    let allResults = [...automaticallyRejectedResults];
+
+    for (let i = 0; i < viableCandidates.length; i += BATCH_SIZE) {
+      const batch = viableCandidates.slice(i, i + BATCH_SIZE);
       
       try {
         const aiResults = await screenCandidates(job, batch, company);
