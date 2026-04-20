@@ -87,7 +87,7 @@ const bulkUploadCandidates = async (req, res, next) => {
     try {
       if (rawData.length > 0) {
         console.log("Analyzing unknown CSV structure using Gemini AI...");
-        const mappingResult = await analyzeCSVStructure(rawData.slice(0, 3));
+        const mappingResult = await analyzeCSVStructure(rawData.slice(0, 2));
         if (mappingResult && mappingResult.mappings) {
           aiMappings = mappingResult.mappings;
           console.log("Gemini AI successfully extracted dynamic schema mappings.");
@@ -96,8 +96,6 @@ const bulkUploadCandidates = async (req, res, next) => {
     } catch (err) {
       console.warn("Gemini CSV Analysis failed or rate-limited. Falling back to semantic fuzzy-parser.");
     }
-
-    const { normalizeCandidateRow } = require('../utils/fileParser');
     
     let candidateData = rawData.map(row => normalizeCandidateRow(row, aiMappings)).filter(c => c.firstName && c.lastName);
 

@@ -4,6 +4,38 @@ const Candidate = require('../models/Candidate');
 const Company = require('../models/Company');
 const ScreeningResult = require('../models/ScreeningResult');
 const { screenCandidates } = require('../utils/geminiService');
+const { buildLocalScreeningResult } = require('../utils/screeningHeuristics');
+
+const getLatestCandidateMutation = (candidates) => candidates.reduce((latest, candidate) => {
+  const candidateTimestamp = new Date(candidate.updatedAt || candidate.createdAt || 0).getTime();
+  return Math.max(latest, candidateTimestamp);
+}, 0);
+
+const getGeminiPoolSize = (shortlistSize, totalCandidates) => {
+  const multiplier = Math.max(1, Number(process.env.GEMINI_AI_POOL_MULTIPLIER || 2));
+  const minPool = Math.max(shortlistSize, Number(process.env.GEMINI_AI_POOL_MIN || 12));
+  const maxPool = Math.max(shortlistSize, Number(process.env.GEMINI_AI_POOL_MAX || 36));
+  const desiredPool = Math.ceil(shortlistSize * multiplier);
+
+  return Math.min(totalCandidates, Math.max(minPool, Math.min(maxPool, desiredPool)));
+};
+
+const stripInternalFields = (result) => {
+  const { _localMeta, ...cleanResult } = result;
+  return cleanResult;
+};
+
+const mergeScreeningResult = (fallbackResult, aiResult) => ({
+  ...fallbackResult,
+  ...aiResult,
+  candidateId: fallbackResult.candidateId,
+  strengths: Array.isArray(aiResult?.strengths) && aiResult.strengths.length > 0 ? aiResult.strengths : fallbackResult.strengths,
+  weaknesses: Array.isArray(aiResult?.weaknesses) && aiResult.weaknesses.length > 0 ? aiResult.weaknesses : fallbackResult.weaknesses,
+  reasoning: aiResult?.reasoning || fallbackResult.reasoning,
+  recommendation: aiResult?.recommendation || fallbackResult.recommendation,
+  skillAnalysis: fallbackResult.skillAnalysis,
+  experienceAnalysis: fallbackResult.experienceAnalysis
+});
 
 // @desc    Trigger AI screening for a job
 // @route   POST /api/screening/:jobId
@@ -28,6 +60,34 @@ const triggerScreening = async (req, res, next) => {
       throw new Error('No candidates found for this job. Please add candidates first.');
     }
 
+    const forceRescreen = req.query.force === 'true' || req.body?.force === true;
+    const existingResults = await ScreeningResult.find({ job: job._id }).sort({ rank: 1 });
+    const latestCandidateMutation = getLatestCandidateMutation(candidates);
+    const screenedAt = job.screenedAt ? new Date(job.screenedAt) : null;
+    const jobUpdatedAt = new Date(job.updatedAt || 0);
+
+    const canReuseExistingResults = Boolean(
+      !forceRescreen &&
+      screenedAt &&
+      job.status === 'completed' &&
+      existingResults.length === candidates.length &&
+      latestCandidateMutation <= screenedAt.getTime() &&
+      jobUpdatedAt.getTime() <= screenedAt.getTime()
+    );
+
+    if (canReuseExistingResults) {
+      return res.json({
+        success: true,
+        message: `Existing screening reused. ${existingResults.length} candidates already scored with no job or candidate changes detected.`,
+        data: {
+          totalEvaluated: existingResults.length,
+          shortlistSize: job.shortlistSize,
+          reusedExisting: true,
+          results: existingResults,
+        },
+      });
+    }
+
     // Update job status to screening
     job.status = 'screening';
     await job.save();
@@ -35,90 +95,82 @@ const triggerScreening = async (req, res, next) => {
     // Clear previous screening results for this job
     await ScreeningResult.deleteMany({ job: job._id });
 
-    // ----------------------------------------------------
-    // NATIVE PRE-FILTERING (Lazy Evaluation Strategy)
-    // ----------------------------------------------------
-    // We completely bypass the Gemini API for candidates who don't have ANY
-    // overlapping keywords natively to save massive API token costs.
-    const requiredKeywords = job.requiredSkills.map(s => s.toLowerCase());
-    
-    const viableCandidates = [];
-    const automaticallyRejectedResults = [];
+    const localResults = candidates.map((candidate) => buildLocalScreeningResult(job, candidate, company));
+    const localResultsById = new Map(localResults.map((result) => [String(result.candidateId), result]));
+    const candidateById = new Map(candidates.map((candidate) => [String(candidate._id), candidate]));
 
-    candidates.forEach(candidate => {
-      // Squash candidate info into a searchable string block
-      const candidateString = `
-        ${candidate.headline} 
-        ${candidate.skills.map(s => s.name || s).join(' ')} 
-        ${JSON.stringify(candidate.experience)}
-      `.toLowerCase();
+    const rankedLocalResults = [...localResults].sort((a, b) => (
+      b.overallScore - a.overallScore ||
+      b.skillMatchScore - a.skillMatchScore ||
+      b.experienceScore - a.experienceScore
+    ));
 
-      // Check if they share at least 20% of required keywords natively
-      let matchedCount = 0;
-      requiredKeywords.forEach(keyword => {
-        if (candidateString.includes(keyword)) matchedCount++;
-      });
-      
-      const threshold = Math.max(1, Math.floor(requiredKeywords.length * 0.2));
+    const geminiPoolSize = getGeminiPoolSize(job.shortlistSize, rankedLocalResults.length);
+    const geminiCandidates = rankedLocalResults
+      .slice(0, geminiPoolSize)
+      .map((result) => candidateById.get(String(result.candidateId)))
+      .filter(Boolean);
 
-      if (matchedCount >= threshold || requiredKeywords.length === 0) {
-        viableCandidates.push(candidate);
-      } else {
-        automaticallyRejectedResults.push({
-          candidateId: candidate._id,
-          overallScore: 10,
-          skillMatchScore: 5,
-          experienceScore: 10,
-          projectScore: 10,
-          credibilityScore: 10,
-          companyFitScore: 10,
-          strengths: [],
-          weaknesses: ['Failed native fast-filter keywords'],
-          reasoning: 'Auto-rejected by native pre-filter: Does not possess minimum expected keyword footprint.'
-        });
-      }
-    });
+    console.log(`Local scoring complete. Total candidates: ${candidates.length}. Gemini refinement pool: ${geminiCandidates.length}.`);
 
-    console.log(`Pre-filter complete. Viable: ${viableCandidates.length}, Auto-Rejected natively: ${automaticallyRejectedResults.length}`);
+    const BATCH_SIZE = Math.max(1, Number(process.env.GEMINI_SCREENING_BATCH_SIZE || 8));
+    const BATCH_DELAY_MS = Math.max(0, Number(process.env.GEMINI_SCREENING_BATCH_DELAY_MS || 8000));
+    const finalResultsById = new Map(localResultsById);
+    let geminiQuotaFallback = false;
+    let geminiEvaluatedCandidates = 0;
 
-    // Process ONLY viable candidates in batches for large numbers
-    const BATCH_SIZE = 20;
-    let allResults = [...automaticallyRejectedResults];
+    for (let i = 0; i < geminiCandidates.length; i += BATCH_SIZE) {
+      const batch = geminiCandidates.slice(i, i + BATCH_SIZE);
 
-    for (let i = 0; i < viableCandidates.length; i += BATCH_SIZE) {
-      const batch = viableCandidates.slice(i, i + BATCH_SIZE);
-      
       try {
-        const aiResults = await screenCandidates(job, batch, company);
-        allResults = allResults.concat(aiResults);
+        console.log(`Sending AI Batch ${Math.floor(i / BATCH_SIZE) + 1} to native Gemini SDK...`);
+        const aiResults = await screenCandidates(job, batch, company, localResultsById);
+
+        aiResults.forEach((aiResult) => {
+          const candidateId = String(aiResult.candidateId);
+          const fallbackResult = finalResultsById.get(candidateId);
+
+          if (!fallbackResult) {
+            return;
+          }
+
+          finalResultsById.set(candidateId, mergeScreeningResult(fallbackResult, aiResult));
+        });
+
+        geminiEvaluatedCandidates += batch.length;
+
+        if (i + BATCH_SIZE < geminiCandidates.length && BATCH_DELAY_MS > 0) {
+          console.log(`Batch complete. Cooling down API connection for ${BATCH_DELAY_MS}ms to prevent 429 errors...`);
+          await new Promise((resolve) => setTimeout(resolve, BATCH_DELAY_MS));
+        }
       } catch (error) {
-        console.error(`Batch ${i / BATCH_SIZE + 1} screening error:`, error.message);
-        // Continue with next batch even if one fails
+        console.error(`Batch ${Math.floor(i / BATCH_SIZE) + 1} screening error:`, error.message);
+
+        if (error.code === 'GEMINI_QUOTA_EXCEEDED') {
+          geminiQuotaFallback = true;
+          console.warn('Gemini quota exhausted. Remaining candidates will keep local heuristic scores for this run.');
+          break;
+        }
       }
     }
 
-    if (allResults.length === 0) {
-      job.status = 'open';
-      await job.save();
-      res.status(500);
-      throw new Error('AI screening failed to produce results. Please check your Gemini API key and try again.');
-    }
+    const allResults = Array.from(finalResultsById.values()).map(stripInternalFields);
 
     // Sort all results by overall score descending
-    allResults.sort((a, b) => b.overallScore - a.overallScore);
+    allResults.sort((a, b) => (
+      b.overallScore - a.overallScore ||
+      b.skillMatchScore - a.skillMatchScore ||
+      b.experienceScore - a.experienceScore
+    ));
 
     const session = await mongoose.startSession();
     session.startTransaction();
 
     try {
-      // Save screening results to database
-      const screeningResults = [];
-      for (let i = 0; i < allResults.length; i++) {
-        const result = allResults[i];
-        const rank = i + 1;
-        const isShortlisted = rank <= job.shortlistSize;
+      const screeningDocs = allResults.map((result, index) => {
+        const rank = index + 1;
 
-        const screeningResultArray = await ScreeningResult.create([{
+        return {
           job: job._id,
           candidate: result.candidateId,
           overallScore: Math.round(result.overallScore) || 0,
@@ -128,17 +180,17 @@ const triggerScreening = async (req, res, next) => {
           credibilityScore: Math.round(result.credibilityScore) || 0,
           companyFitScore: Math.round(result.companyFitScore) || 0,
           rank,
-          isShortlisted,
+          isShortlisted: rank <= job.shortlistSize,
           strengths: result.strengths || [],
           weaknesses: result.weaknesses || [],
           recommendation: result.recommendation || 'consider',
           reasoning: result.reasoning || '',
           skillAnalysis: result.skillAnalysis || '',
           experienceAnalysis: result.experienceAnalysis || '',
-        }], { session });
-        
-        screeningResults.push(screeningResultArray[0]);
-      }
+        };
+      });
+
+      const screeningResults = await ScreeningResult.insertMany(screeningDocs, { session });
 
       // Update job status to completed
       job.status = 'completed';
@@ -148,12 +200,19 @@ const triggerScreening = async (req, res, next) => {
       await session.commitTransaction();
       session.endSession();
 
+      const quotaMessage = geminiQuotaFallback
+        ? ' Gemini quota ran out during this run, so remaining candidates used the local fallback scorer.'
+        : '';
+
       res.json({
         success: true,
-        message: `Screening completed. ${screeningResults.length} candidates evaluated, top ${job.shortlistSize} shortlisted.`,
+        message: `Screening completed. ${screeningResults.length} candidates evaluated, top ${job.shortlistSize} shortlisted.${quotaMessage}`,
         data: {
           totalEvaluated: screeningResults.length,
           shortlistSize: job.shortlistSize,
+          geminiEvaluatedCandidates,
+          geminiPoolSize,
+          usedLocalFallback: geminiQuotaFallback,
           results: screeningResults,
         },
       });
