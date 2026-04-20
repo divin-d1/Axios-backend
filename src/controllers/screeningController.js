@@ -5,6 +5,7 @@ const Company = require('../models/Company');
 const ScreeningResult = require('../models/ScreeningResult');
 const { screenCandidates } = require('../utils/geminiService');
 const { buildLocalScreeningResult } = require('../utils/screeningHeuristics');
+const { buildScreeningMeta, serializeScreeningResult } = require('../utils/screeningPresentation');
 
 const getLatestCandidateMutation = (candidates) => candidates.reduce((latest, candidate) => {
   const candidateTimestamp = new Date(candidate.updatedAt || candidate.createdAt || 0).getTime();
@@ -29,6 +30,7 @@ const mergeScreeningResult = (fallbackResult, aiResult) => ({
   ...fallbackResult,
   ...aiResult,
   candidateId: fallbackResult.candidateId,
+  evaluationMode: 'gemini',
   strengths: Array.isArray(aiResult?.strengths) && aiResult.strengths.length > 0 ? aiResult.strengths : fallbackResult.strengths,
   weaknesses: Array.isArray(aiResult?.weaknesses) && aiResult.weaknesses.length > 0 ? aiResult.weaknesses : fallbackResult.weaknesses,
   reasoning: aiResult?.reasoning || fallbackResult.reasoning,
@@ -61,7 +63,9 @@ const triggerScreening = async (req, res, next) => {
     }
 
     const forceRescreen = req.query.force === 'true' || req.body?.force === true;
-    const existingResults = await ScreeningResult.find({ job: job._id }).sort({ rank: 1 });
+    const existingResults = await ScreeningResult.find({ job: job._id })
+      .populate('candidate', 'firstName lastName email headline location source skills')
+      .sort({ rank: 1 });
     const latestCandidateMutation = getLatestCandidateMutation(candidates);
     const screenedAt = job.screenedAt ? new Date(job.screenedAt) : null;
     const jobUpdatedAt = new Date(job.updatedAt || 0);
@@ -76,6 +80,12 @@ const triggerScreening = async (req, res, next) => {
     );
 
     if (canReuseExistingResults) {
+      const reusedResults = existingResults.map((result) => serializeScreeningResult(result));
+      const reusedMeta = buildScreeningMeta(existingResults, {
+        totalResults: existingResults.length,
+        shortlistedResults: existingResults.filter((result) => result.isShortlisted).length
+      });
+
       return res.json({
         success: true,
         message: `Existing screening reused. ${existingResults.length} candidates already scored with no job or candidate changes detected.`,
@@ -83,7 +93,8 @@ const triggerScreening = async (req, res, next) => {
           totalEvaluated: existingResults.length,
           shortlistSize: job.shortlistSize,
           reusedExisting: true,
-          results: existingResults,
+          results: reusedResults,
+          meta: reusedMeta,
         },
       });
     }
@@ -95,7 +106,10 @@ const triggerScreening = async (req, res, next) => {
     // Clear previous screening results for this job
     await ScreeningResult.deleteMany({ job: job._id });
 
-    const localResults = candidates.map((candidate) => buildLocalScreeningResult(job, candidate, company));
+    const localResults = candidates.map((candidate) => ({
+      ...buildLocalScreeningResult(job, candidate, company),
+      evaluationMode: 'local-fallback'
+    }));
     const localResultsById = new Map(localResults.map((result) => [String(result.candidateId), result]));
     const candidateById = new Map(candidates.map((candidate) => [String(candidate._id), candidate]));
 
@@ -187,6 +201,7 @@ const triggerScreening = async (req, res, next) => {
           reasoning: result.reasoning || '',
           skillAnalysis: result.skillAnalysis || '',
           experienceAnalysis: result.experienceAnalysis || '',
+          evaluationMode: result.evaluationMode || 'local-fallback',
         };
       });
 
@@ -199,6 +214,11 @@ const triggerScreening = async (req, res, next) => {
 
       await session.commitTransaction();
       session.endSession();
+
+      const screeningMeta = buildScreeningMeta(screeningResults, {
+        totalResults: screeningResults.length,
+        shortlistedResults: screeningResults.filter((result) => result.isShortlisted).length
+      });
 
       const quotaMessage = geminiQuotaFallback
         ? ' Gemini quota ran out during this run, so remaining candidates used the local fallback scorer.'
@@ -214,6 +234,7 @@ const triggerScreening = async (req, res, next) => {
           geminiPoolSize,
           usedLocalFallback: geminiQuotaFallback,
           results: screeningResults,
+          meta: screeningMeta,
         },
       });
     } catch (transactionError) {
@@ -243,15 +264,33 @@ const getScreeningResults = async (req, res, next) => {
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    const results = await ScreeningResult.find(filter)
-      .populate('candidate', 'name email phone skills totalYearsExperience source location')
-      .sort({ rank: 1 });
+    const [results, allResults] = await Promise.all([
+      ScreeningResult.find(filter)
+        .populate('candidate', 'firstName lastName email headline location source skills')
+        .sort({ rank: 1 }),
+      ScreeningResult.find({ job: req.params.jobId })
+        .select('evaluationMode reasoning strengths weaknesses isShortlisted')
+    ]);
+
+    const serializedResults = results.map((result) => serializeScreeningResult(result));
+    const meta = buildScreeningMeta(results, {
+      totalResults: allResults.length,
+      shortlistedResults: allResults.filter((result) => result.isShortlisted).length
+    });
+    const jobSummary = {
+      _id: job._id,
+      title: job.title,
+      company: job.company?.name || '',
+      shortlistSize: job.shortlistSize
+    };
 
     res.json({
       success: true,
-      count: results.length,
-      job: job ? { title: job.title, company: job.company?.name, shortlistSize: job.shortlistSize } : null,
-      data: results,
+      data: {
+        job: jobSummary,
+        results: serializedResults,
+        meta,
+      },
     });
   } catch (error) {
     next(error);

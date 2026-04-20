@@ -2,6 +2,7 @@ const Job = require('../models/Job');
 const Candidate = require('../models/Candidate');
 const Company = require('../models/Company');
 const ScreeningResult = require('../models/ScreeningResult');
+const { serializeScreeningResult } = require('../utils/screeningPresentation');
 
 // @desc    Get dashboard statistics (scoped to user's company)
 // @route   GET /api/dashboard
@@ -46,11 +47,13 @@ const getDashboardStats = async (req, res, next) => {
         .limit(5)
         .select('title status totalApplicants createdAt screenedAt shortlistSize'),
       ScreeningResult.find({ job: { $in: jobIds }, isShortlisted: true })
-        .populate('candidate', 'name email')
+        .populate('candidate', 'firstName lastName email')
         .populate({ path: 'job', select: 'title' })
         .sort({ createdAt: -1 })
         .limit(10),
     ]);
+
+    const serializedRecentScreenings = recentScreenings.map((result) => serializeScreeningResult(result));
 
     res.json({
       success: true,
@@ -63,7 +66,7 @@ const getDashboardStats = async (req, res, next) => {
           completedJobs,
         },
         recentJobs,
-        recentScreenings,
+        recentScreenings: serializedRecentScreenings,
       },
     });
   } catch (error) {

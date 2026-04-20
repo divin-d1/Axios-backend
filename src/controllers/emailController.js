@@ -3,6 +3,7 @@ const ScreeningResult = require('../models/ScreeningResult');
 const Job = require('../models/Job');
 const Company = require('../models/Company');
 const { sendBatchEmails, generateShortlistEmail, generateAcknowledgmentEmail } = require('../utils/emailService');
+const { getCandidateDisplayName } = require('../utils/screeningPresentation');
 
 // @desc    Send emails to shortlisted candidates
 // @route   POST /api/emails/shortlist/:jobId
@@ -27,7 +28,7 @@ const sendShortlistEmails = async (req, res, next) => {
       filter.candidate = { $in: candidateIds };
     }
 
-    const results = await ScreeningResult.find(filter).populate('candidate', 'name email');
+    const results = await ScreeningResult.find(filter).populate('candidate', 'firstName lastName email');
 
     if (results.length === 0) {
       res.status(400);
@@ -38,8 +39,9 @@ const sendShortlistEmails = async (req, res, next) => {
     const recipients = results
       .filter(r => r.candidate && r.candidate.email)
       .map(r => {
+        const candidateName = getCandidateDisplayName(r.candidate);
         const emailContent = generateShortlistEmail({
-          candidateName: r.candidate.name,
+          candidateName,
           jobTitle: job.title,
           companyName: job.company.name,
           rank: r.rank,
@@ -48,7 +50,7 @@ const sendShortlistEmails = async (req, res, next) => {
         });
         return {
           email: r.candidate.email,
-          name: r.candidate.name,
+          name: candidateName,
           ...emailContent,
         };
       });
@@ -100,12 +102,16 @@ const sendCustomEmails = async (req, res, next) => {
     
     const recipients = ownCandidates
       .filter(c => c.email)
-      .map(c => ({
-        email: c.email,
-        name: c.name,
-        subject,
-        html: htmlContent.replace(/\{\{name\}\}/g, c.name),
-      }));
+      .map(c => {
+        const candidateName = getCandidateDisplayName(c);
+
+        return {
+          email: c.email,
+          name: candidateName,
+          subject,
+          html: htmlContent.replace(/\{\{name\}\}/g, candidateName),
+        };
+      });
 
     const emailResults = await sendBatchEmails(recipients);
 

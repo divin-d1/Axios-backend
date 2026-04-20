@@ -57,9 +57,15 @@ const screeningResultSchema = new mongoose.Schema({
     required: true,
     min: 1,
   },
-  isShortlisted: {
+isShortlisted: {
     type: Boolean,
     default: false,
+  },
+
+  evaluationMode: {
+    type: String,
+    enum: ['gemini', 'local-fallback'],
+    default: 'gemini',
   },
 
   // ─── AI Explainability ───
