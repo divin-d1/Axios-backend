@@ -11,7 +11,16 @@ const intFromEnv = (name, fallback) => {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 };
 
+const msFromEnv = (name, fallback) => {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value >= 0 ? value : fallback;
+};
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+let csvMappingGeminiDisabledUntilMs = 0;
+let resumeGeminiDisabledUntilMs = 0;
+let summaryGeminiDisabledUntilMs = 0;
 
 const initGemini = () => {
   if (!process.env.GEMINI_API_KEY) {
@@ -217,6 +226,14 @@ const normalizeScreeningResponse = (result, fallbackCandidateId) => ({
  * Parses raw resume text into the official Umurava Hackathon JSON schema
  */
 const parseResume = async (resumeText) => {
+  if (String(process.env.GEMINI_DISABLE_RESUME_PARSING || '').toLowerCase() === 'true') {
+    return buildResumeFallback(resumeText);
+  }
+
+  if (Date.now() < resumeGeminiDisabledUntilMs) {
+    return buildResumeFallback(resumeText);
+  }
+
   const model = getModel({
     responseMimeType: 'application/json',
     maxOutputTokens: intFromEnv('GEMINI_RESUME_MAX_OUTPUT_TOKENS', 1800)
@@ -259,6 +276,10 @@ ${trimmedResumeText}
     resumeCache.set(cacheKey, parsed);
     return parsed;
   } catch (error) {
+    if (error?.code === 'GEMINI_QUOTA_EXCEEDED' && error?.dailyLimitExceeded) {
+      const cooldownMs = msFromEnv('GEMINI_RESUME_DAILY_QUOTA_COOLDOWN_MS', 6 * 60 * 60 * 1000);
+      resumeGeminiDisabledUntilMs = Date.now() + cooldownMs;
+    }
     console.error('Gemini API Parsing Error:', error);
     return buildResumeFallback(resumeText);
   }
@@ -305,17 +326,24 @@ const screenCandidates = async (job, candidates, company, localResultsById = new
   }
 
   const prompt = `
-Rank recruiter candidates. Ignore name, gender, age.
-Use only evidence in the JSON provided.
-Return JSON array only. No markdown. No backticks.
-One object per candidate with:
-candidateId, overallScore, skillMatchScore, experienceScore, projectScore, credibilityScore, companyFitScore, strengths, weaknesses, reasoning, recommendation.
-Rules:
-- scores 0..100
-- strengths max 2 items
-- weaknesses max 2 items
-- reasoning max 12 words, caveman style
-- recommendation one of strongly-recommend, recommend, consider, not-recommended
+Expert HR Assessor (10yr exp). Rank candidates against Job strictly using JSON evidence.
+Ignore name, gender, age. Caveman bounds: minimal words, maximum accuracy.
+Return JSON array EXACTLY matching this format. No markdown, no backticks.
+[
+  {
+    "candidateId": "id",
+    "overallScore": 85,
+    "skillMatchScore": 90,
+    "experienceScore": 80,
+    "projectScore": 85,
+    "credibilityScore": 80,
+    "companyFitScore": 85,
+    "strengths": ["max 2 short items"],
+    "weaknesses": ["max 2 short items"],
+    "reasoning": "max 12 words caveman style why score",
+    "recommendation": "strongly-recommend|recommend|consider|not-recommended"
+  }
+]
 Job:
 ${JSON.stringify({
   title: compactText(job?.title || '', 80),
@@ -358,6 +386,14 @@ ${JSON.stringify(candidateSnapshots)}
  * Generate a personalized summary for a specific candidate match
  */
 const generateCandidateSummary = async (candidate, job) => {
+  if (String(process.env.GEMINI_DISABLE_SUMMARY || '').toLowerCase() === 'true') {
+    return 'Candidate aligns with some core role signals.';
+  }
+
+  if (Date.now() < summaryGeminiDisabledUntilMs) {
+    return 'Candidate aligns with some core role signals.';
+  }
+
   const model = getModel({
     maxOutputTokens: intFromEnv('GEMINI_SUMMARY_MAX_OUTPUT_TOKENS', 80)
   });
@@ -368,6 +404,10 @@ const generateCandidateSummary = async (candidate, job) => {
     const result = await generateContentWithRetries(model, prompt);
     return compactText(result.response.text(), 80);
   } catch (error) {
+    if (error?.code === 'GEMINI_QUOTA_EXCEEDED' && error?.dailyLimitExceeded) {
+      const cooldownMs = msFromEnv('GEMINI_SUMMARY_DAILY_QUOTA_COOLDOWN_MS', 6 * 60 * 60 * 1000);
+      summaryGeminiDisabledUntilMs = Date.now() + cooldownMs;
+    }
     return 'Candidate aligns with some core role signals.';
   }
 };
@@ -377,6 +417,14 @@ const generateCandidateSummary = async (candidate, job) => {
  * returning a mapping configuration that can be safely applied to 10k+ rows locally.
  */
 const analyzeCSVStructure = async (sampleRows) => {
+  if (String(process.env.GEMINI_DISABLE_CSV_MAPPING || '').toLowerCase() === 'true') {
+    return null;
+  }
+
+  if (Date.now() < csvMappingGeminiDisabledUntilMs) {
+    return null;
+  }
+
   const model = getModel({
     responseMimeType: 'application/json',
     maxOutputTokens: intFromEnv('GEMINI_CSV_MAX_OUTPUT_TOKENS', 300)
@@ -416,6 +464,10 @@ ${JSON.stringify(reducedSampleRows)}
     csvMappingCache.set(cacheKey, parsed);
     return parsed;
   } catch (error) {
+    if (error?.code === 'GEMINI_QUOTA_EXCEEDED' && error?.dailyLimitExceeded) {
+      const cooldownMs = msFromEnv('GEMINI_CSV_DAILY_QUOTA_COOLDOWN_MS', 6 * 60 * 60 * 1000);
+      csvMappingGeminiDisabledUntilMs = Date.now() + cooldownMs;
+    }
     console.error('Gemini CSV mapping error:', error);
     return null;
   }

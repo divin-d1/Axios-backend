@@ -13,12 +13,40 @@ const getLatestCandidateMutation = (candidates) => candidates.reduce((latest, ca
 }, 0);
 
 const getGeminiPoolSize = (shortlistSize, totalCandidates) => {
+  const mode = String(process.env.GEMINI_SCREENING_REFINE_POOL_MODE || 'shortlist-only').toLowerCase();
+  if (mode === 'shortlist-only') {
+    return Math.min(totalCandidates, Math.max(1, Number(shortlistSize) || 1));
+  }
+
   const multiplier = Math.max(1, Number(process.env.GEMINI_AI_POOL_MULTIPLIER || 2));
   const minPool = Math.max(shortlistSize, Number(process.env.GEMINI_AI_POOL_MIN || 12));
   const maxPool = Math.max(shortlistSize, Number(process.env.GEMINI_AI_POOL_MAX || 36));
   const desiredPool = Math.ceil(shortlistSize * multiplier);
 
   return Math.min(totalCandidates, Math.max(minPool, Math.min(maxPool, desiredPool)));
+};
+
+const companyScreeningLocks = new Map();
+const acquireCompanyScreeningLock = (companyId) => {
+  const key = String(companyId || '');
+  if (!key) return true;
+
+  const now = Date.now();
+  const ttlMs = Math.max(5 * 1000, Number(process.env.SCREENING_LOCK_TTL_MS || 10 * 60 * 1000));
+  const existing = companyScreeningLocks.get(key);
+
+  if (existing && existing.expiresAt > now) {
+    return false;
+  }
+
+  companyScreeningLocks.set(key, { expiresAt: now + ttlMs });
+  return true;
+};
+
+const releaseCompanyScreeningLock = (companyId) => {
+  const key = String(companyId || '');
+  if (!key) return;
+  companyScreeningLocks.delete(key);
 };
 
 const stripInternalFields = (result) => {
@@ -42,6 +70,9 @@ const mergeScreeningResult = (fallbackResult, aiResult) => ({
 // @desc    Trigger AI screening for a job
 // @route   POST /api/screening/:jobId
 const triggerScreening = async (req, res, next) => {
+  let lockCompanyId = null;
+  let lockAcquired = false;
+
   try {
     const job = await Job.findOne({ _id: req.params.jobId, company: req.user.company });
     if (!job) {
@@ -96,6 +127,14 @@ const triggerScreening = async (req, res, next) => {
           results: reusedResults,
           meta: reusedMeta,
         },
+      });
+    }
+
+    lockCompanyId = company._id;
+    lockAcquired = acquireCompanyScreeningLock(lockCompanyId);
+    if (!lockAcquired) {
+      return res.status(409).json({
+        error: 'A screening run is already in progress for your company. Please wait 1–2 minutes and retry.'
       });
     }
 
@@ -224,6 +263,9 @@ const triggerScreening = async (req, res, next) => {
         ? ' Gemini quota ran out during this run, so remaining candidates used the local fallback scorer.'
         : '';
 
+      releaseCompanyScreeningLock(lockCompanyId);
+      lockAcquired = false;
+
       res.json({
         success: true,
         message: `Screening completed. ${screeningResults.length} candidates evaluated, top ${job.shortlistSize} shortlisted.${quotaMessage}`,
@@ -244,6 +286,10 @@ const triggerScreening = async (req, res, next) => {
     }
   } catch (error) {
     next(error);
+  } finally {
+    if (lockAcquired && lockCompanyId) {
+      releaseCompanyScreeningLock(lockCompanyId);
+    }
   }
 };
 
