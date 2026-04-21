@@ -1,251 +1,215 @@
-# Axios Backend Architecture (Express + MongoDB + Gemini)
+# Axios Backend
 
-Backend service for the Umurava AI Hackathon solution: an explainable AI screening engine for recruiter workflows.
-
----
-
-## 1) Backend Mission
-
-The backend is the system-of-record and decision-orchestration layer. It handles:
-
-- identity and authorization
-- company-tenant data boundaries
-- job and candidate lifecycle APIs
-- ingestion pipelines for CSV/Excel/PDF input
-- AI evaluation orchestration with Gemini
-- deterministic fallback scoring under quota constraints
-- screening result persistence and explainability metadata
-- shortlist communication orchestration
+Express API, AI orchestration engine, and data layer for the Axios AI screening platform.
 
 ---
 
-## 2) High-Level Architecture
+## Responsibility
 
-```mermaid
-flowchart TD
-  UI[Next.js Frontend]
-  API[Express API]
-  DB[(MongoDB)]
-  G[Gemini API]
-  CLD[Cloudinary]
-  SMTP[SMTP Provider]
+The backend is the system-of-record and AI decision layer. It handles:
 
-  UI -->|JWT Bearer + REST| API
-  API --> DB
-  API --> G
-  API --> CLD
-  API --> SMTP
+- Identity, authentication, and JWT session management
+- Multi-tenant company data isolation
+- Job and candidate lifecycle management
+- File ingestion pipelines (CSV, Excel, PDF)
+- AI screening orchestration via Gemini API
+- Deterministic fallback scoring when AI quota is constrained
+- Screening result persistence with full explainability metadata
+- Shortlist email dispatch via SMTP
+
+---
+
+## Stack
+
+| | |
+|---|---|
+| Runtime | Node.js (CommonJS) |
+| Framework | Express |
+| Database | MongoDB via Mongoose ODM |
+| AI / LLM | Google Gemini (`@google/generative-ai`) |
+| Auth | JWT (`jsonwebtoken`) + `bcryptjs` |
+| File Handling | Multer, `pdf-parse`, `xlsx`, `csv-parser` |
+| File Storage | Cloudinary |
+| Email | Nodemailer (SMTP) |
+| Security | `helmet`, `express-rate-limit`, `express-validator` |
+
+---
+
+## Architecture
+
+```
+Next.js Frontend
+      │
+      │ JWT Bearer + REST
+      ▼
+Express API
+  ├── /api/auth          Identity and session
+  ├── /api/company       Onboarding and company context
+  ├── /api/jobs          Job lifecycle (CRUD)
+  ├── /api/candidates    Ingestion and candidate management
+  ├── /api/screening     AI evaluation and ranked results
+  ├── /api/emails        Shortlist communication
+  ├── /api/dashboard     Company-scoped metrics
+  └── /api/config        Constants (industries, departments)
+      │
+      ├── MongoDB Atlas   Persistence
+      ├── Gemini API      AI scoring and reasoning
+oudinary      Resume file storage
+      └── SMTP            Email dispatch
 ```
 
 ---
 
-## 3) Service Stack
+## Domain Model
 
-- Node.js (CommonJS runtime)
-- Express REST API
-- Mongoose ODM (MongoDB)
-- JWT auth
-- `@google/generative-ai` (Gemini integration)
-- Multer + parsers for document ingestion
-- Nodemailer for outbound shortlisted-candidate messages
+### User
+Identity record. Linked to one `Company` after onboarding.
 
----
+### Company
+Org profile including industry, size, departments, hiring philosophy, and tech stack. This context is injected into every AI screening prompt to calibrate results to the company's actual hiring standards.
 
-## 4) Domain Model
+### Job
+Role definition with scoring weights, shortlist target size, and status. Always scoped to a company.
 
-Primary entities:
 
-- `User`
-  - identity, verification fields, linked `company`
-- `Company`
-  - org profile, departments, hiring context
-- `Job`
-  - role definition, scoring weights, shortlist size, status
-- `Candidate`
-  - normalized profile linked to `job`
-- `ScreeningResult`
-  - per job-candidate score, rank, strengths, weaknesses, recommendation, evaluation mode
+Normalized applicant profile linked to a specific job. Created from structured uploads or parsed from CSV/PDF.
 
-Multi-tenant guarantee is enforced by scoping all job/candidate/screening operations through the user’s company.
+### ScreeningResult
+Per-candidate AI evaluation output: score (0–100), rank, strengths, weaknesses, recommendation, and `evaluationMode` (AI or fallback). Linked to both job and candidate.
 
 ---
 
-## 5) API Architecture
+## AI Screening Pipeline
 
-Major route groups:
-
-- `/api/auth` - register/login/password/reset
-- `/api/company` - onboarding setup and current-user company context
-- `/api/companies` - company management endpoints (authorized)
-- `/api/jobs` - job create/read/update/delete (authorized, company scoped)
-- `/api/candidates` - ingestion/list/detail/delete (authorized, company scoped)
-- `/api/screening` - trigger and retrieve ranking outputs
-- `/api/emails` - shortlist communication
-- `/api/dashboard` - company-scoped summary metrics
-
----
-
-## 6) Security Model
-
-### Authentication
-
-- JWT required on protected endpoints
-- decoded user loaded from DB and attached to request context
-
-### Authorization
-
-- ownership checks on each entity access path
-- cross-company access denied (`403`)
-
-### Operational Protection
-
-- `helmet` headers enabled
-- global rate limiting for `/api/*`
-- centralized not-found and error handling middleware
-
-### Onboarding Integrity
-
-- onboarding setup endpoint enforces one-time company creation
-- duplicate company setup attempts are blocked (`409`)
-
----
-
-## 7) AI Screening System Design
-
-### Objectives
-
-- evaluate many candidates against job requirements
-- rank consistently and explain outcomes
-- stay resilient under quota/rate constraints
-
-### Execution Pipeline
-
-1. Validate requester + company ownership
-2. Load job + candidates
-3. Reject screening if candidate list is empty
-4. Compute local baseline score for all candidates
+1. Validate requester and company ownership
+2. Load job definition and all linked candidates
+3. Reject if candidate list is empty
+tes
 5. Select candidate pool for Gemini refinement
-6. Run Gemini in batches with cooldown controls
-7. Merge AI and fallback results
-8. Sort, rank, mark shortlisted
-9. Persist results transactionally
-10. Return recruiter-friendly output with explainability fields
+6. Run Gemini in controlled batches with cooldown between batches
+7. Merge AI results with fallback scores
+8. Sort, rank, and mark shortlisted candidates
+9. Persist results with full explainability fields
+10. Return recruiter-ready output
 
-### Quota and Reliability Controls
+### Company Context in Prompts
 
-- company-level screening lock to prevent concurrent collisions
-- configurable batch sizes and delay between batches
-- cached result reuse when job/candidate state has not changed
-- graceful local fallback when Gemini quota is unavailable
-- explicit `evaluationMode` metadata to maintain transparency
+Every Gemini prompt includes the company's hiring philosophy, industry, departments, and tech stack. This means:
+- A research-heavy org gets candidates evaluated on academic depth
+s candidates evaluated on shipping speed
+- A non-technical company gets candidates evaluated on business skills
+
+This is what makes Axios screening contextually relevant rather than generic.
+
+### Resilience
+
+- Company-level screening lock prevents concurrent collision
+- Configurable batch sizes and inter-batch delays
+- Cached result reuse when job/candidate state is unchanged
+- Graceful local fallback when Gemini quota is unavailable
+- `evaluationMode` field on every result maintains transparency
 
 ---
 
-## 8) Ingestion Design
+tion Design
 
-### Structured Uploads (CSV/Excel)
+### CSV / Excel
+- Raw rows parsed locally
+- AI-assisted column mapping for unknown schemas
+- Normalized candidate records persisted in bulk
 
-- raw rows parsed locally
-- AI-assisted mapping for unknown schema patterns
-- normalized candidate records persisted in bulk transaction
-
-### Resume Uploads (PDF)
-
-- text extraction and normalization
-- optional Cloudinary storage for file reference
+### PDF Resumes
+- Text extracted and normalized
+- Optional Cloudinary storage for file reference
 - AI parsing into unified candidate object before persistence
 
 ---
 
-## 9) Job Lifecycle and Data Integrity
+## Security Model
 
-- create: job is always bound to authenticated user’s company
-- update: company ownership cannot be reassigned
-- delete:
-  - deletes linked candidates
-  - deletes linked screening results
-  - removes any orphan screening relations tied to deleted candidates
-
-This prevents stale records and keeps dashboard/statistics accurate.
-
----
-
-## 10) Environment Variables
-
-Use `.env.example` as baseline. Required production keys:
-
-- `PORT`
-- `NODE_ENV`
-- `MONGODB_URI`
-- `JWT_SECRET`
-- `CORS_ORIGIN`
-- `GEMINI_API_KEY`
-
-Optional but recommended:
-
-- SMTP settings for real email dispatch
-- Cloudinary settings for resume storage
-- Gemini tuning knobs for pool size/batch/cooldowns
+- JWT required on all protected endpoints
+- Decoded user loaded from DB and attached to request context
+- Ownership checks on every entity access path
+nied with `403`
+- `helmet` security headers enabled globally
+- Rate limiting on all `/api/*` routes
+- Onboarding endpoint enforces one-time company creation (blocks duplicate setup with `409`)
 
 ---
 
-## 11) Local Development
+## Environment Variables
+
+Copy `.env.example` to `.env` and fill in:
+
+```env
+PORT=5000
+NODE_ENV=development
+MONGODB_URI=mongodb+srv://...
+JWT_SECRET=your-strong-secret
+
+CORS_ORIGIN=http://localhost:3000
+
+GEMINI_API_KEY=your-gemini-key
+
+# Optional — email dispatch
+SMTP_HOST=
+SMTP_PORT=
+SMTP_USER=
+SMTP_PASS=
+
+
+# Optional — resume storage
+CLOUDINARY_CLOUD_NAME=
+CLOUDINARY_API_KEY=
+CLOUDINARY_API_SECRET=
+```
+
+---
+
+## Local Development
 
 ```bash
 npm install
 npm run dev
 ```
 
-Default API URL: `http://localhost:5000/api`
+API runs at `http://localhost:5000/api`.
 
 ---
 
-## 12) Production Deployment Guidance
+## Production Deployment
 
-Recommended topology:
+Recommended:
+- **Backend**: Render / Railway / Fly.io
+- **Database**: MongoDB Atlas
+- **Frontend**: Vercel
 
-- Backend: Render/Railway/Fly
-- Database: MongoDB Atlas
-- Frontend: Vercel
-
-Minimum hardening actions:
-
-- set strong `JWT_SECRET`
-- set strict `CORS_ORIGIN` to deployed frontend
-- avoid default credentials in SMTP/Cloudinary
-- keep secrets only in platform environment config
+Hardening checklist:
+- Set a strong `JWT_SECRET` (32+ random characters)
+- Set `CORS_ORIGIN` to exact deployed frontend URL
+- Kg only
+- Set `NODE_ENV=production`
 
 ---
 
-## 13) Observability and Operations
+## Hackathon Requirement Mapping
 
-Current:
-
-- HTTP request logging in non-production
-- explicit API errors with status codes
-
-Recommended next phase:
-
-- structured logs with request correlation IDs
-- per-route latency/error metrics
-- smoke tests for critical flows
-- CI validation before deploy
-
----
-
-## 14) Hackathon Requirement Mapping
-
-- Gemini as mandatory LLM: implemented
-- multi-candidate analysis: implemented
-- ranked shortlist (top N): implemented
-- clear reasoning, strengths, gaps: implemented
-- recruiter final control: preserved (AI is advisory, not final authority)
-- support for structured profiles + external uploads: implemented
+| Requirement | Implementation |
+|---|---|
+| Gemini as mandatory LLM | `@google/generative-ai` in screening pipeline |
+| Multi-candidate evaluation | Batch Gemini prompts per job |
+| Ranked shortlist (Top 10/20) | Configurable per job at creation |
+| Strengths, gaps, recommendation | Structured fields on every `ScreeningResult` |
+| Structured profile ingestion | CSV/Excel pipeline |
+| External resume ingestion | PDF parse pipeline |
+| Recruiter final control | AI is advisory; recruiter triggers and decides |
+| Explainable AI output | `evaluationMode` + reasoning fields on all results |
 
 ---
 
-## 15) Known Gaps and Future Hardening
+## Known Gaps / Future Work
 
-- add automated API integration tests for auth and tenancy boundaries
-- add background job queue for very large batch operations
-- add RBAC model (Admin/Recruiter/Viewer) at API level if required by product roadmap
+- Automated integration tests for auth and tenancy boundaries
+- Background job queue for very large batch screening operations
+- RBAC model (Admin / Recruiter / Viewer) for team-based access
+- Webhook support for real-time screening progress updates

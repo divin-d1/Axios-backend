@@ -30,10 +30,21 @@ const initGemini = () => {
   return new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 };
 
+// Safe model name — strip anything that looks like an old/invalid version suffix
+const SAFE_MODELS = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-2.5-flash'];
+const resolveModelName = () => {
+  const envModel = (process.env.GEMINI_MODEL || '').trim();
+  // Reject known broken model names
+  if (!envModel || envModel.includes('1.5-flash-002') || envModel.includes('1.0')) {
+    return 'gemini-2.0-flash';
+  }
+  return envModel;
+};
+
 const getModel = (generationConfig = {}) => {
   const genAI = initGemini();
   return genAI.getGenerativeModel({
-    model: process.env.GEMINI_MODEL || 'gemini-2.0-flash',
+    model: resolveModelName(),
     generationConfig: {
       temperature: 0.1,
       candidateCount: 1,
@@ -113,6 +124,18 @@ const isQuotaExceededError = (error) => {
   );
 };
 
+const isTransientError = (error) => {
+  if (!error) return false;
+  if (Number(error?.status) === 503) return true;
+  const message = String(error?.message || '').toLowerCase();
+  return (
+    message.includes('service unavailable') ||
+    message.includes('high demand') ||
+    message.includes('overloaded') ||
+    message.includes('try again later')
+  );
+};
+
 const toQuotaError = (error) => {
   const quotaError = new Error(hasDailyQuotaViolation(error)
     ? 'Gemini daily quota exhausted'
@@ -127,12 +150,43 @@ const toQuotaError = (error) => {
 };
 
 const generateContentWithRetries = async (model, prompt) => {
-  const maxRetries = intFromEnv('GEMINI_MAX_RETRIES', 2);
+  const maxRetries = intFromEnv('GEMINI_MAX_RETRIES', 4);
 
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
     try {
       return await model.generateContent(prompt);
     } catch (error) {
+      const status = Number(error?.status);
+
+      // 404 — model not found, immediately switch to stable fallback
+      if (status === 404) {
+        console.warn(`Gemini model not found (404), switching to gemini-2.0-flash fallback...`);
+        const genAI = initGemini();
+        const fallbackModel = genAI.getGenerativeModel({
+          model: 'gemini-2.0-flash',
+          generationConfig: model.generationConfig || {}
+        });
+        return await fallbackModel.generateContent(prompt);
+      }
+
+      // 503 — transient overload, exponential backoff
+      if (isTransientError(error)) {
+        if (attempt === maxRetries) {
+          // Last resort: try stable model before giving up
+          console.warn('Gemini 503 exhausted retries, trying gemini-2.0-flash as last resort...');
+          const genAI = initGemini();
+          const fallbackModel = genAI.getGenerativeModel({
+            model: 'gemini-2.0-flash',
+            generationConfig: model.generationConfig || {}
+          });
+          return await fallbackModel.generateContent(prompt);
+        }
+        const backoffMs = Math.min(5000 * Math.pow(2, attempt), 60000);
+        console.warn(`Gemini 503 on attempt ${attempt + 1}, retrying in ${backoffMs}ms...`);
+        await sleep(backoffMs);
+        continue;
+      }
+
       if (!isQuotaExceededError(error)) {
         throw error;
       }
