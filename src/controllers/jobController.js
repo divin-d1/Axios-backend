@@ -102,8 +102,16 @@ const deleteJob = async (req, res, next) => {
       return res.status(404).json({ error: 'Job not found or access denied' });
     }
 
+    const candidates = await Candidate.find({ job: job._id }).select('_id');
+    const candidateIds = candidates.map((candidate) => candidate._id);
+
+    await ScreeningResult.deleteMany({
+      $or: [
+        { job: job._id },
+        { candidate: { $in: candidateIds } },
+      ],
+    });
     await Candidate.deleteMany({ job: job._id });
-    await ScreeningResult.deleteMany({ job: job._id });
     await Job.findByIdAndDelete(job._id);
 
     res.json({ success: true, data: {} });

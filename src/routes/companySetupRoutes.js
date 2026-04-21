@@ -11,6 +11,11 @@ const User = require('../models/User');
  */
 router.post('/setup', protect, async (req, res, next) => {
   try {
+    const existingUser = await User.findById(req.user._id).select('company');
+    if (existingUser?.company) {
+      return res.status(409).json({ error: 'Onboarding already completed for this account' });
+    }
+
     const { name, email, website, size, industries, departments, hiringPhilosophy, description, specialization, skills } = req.body;
 
     if (!name) {
