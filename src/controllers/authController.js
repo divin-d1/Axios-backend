@@ -146,16 +146,14 @@ exports.forgotPassword = async (req, res, next) => {
     const { email } = req.body;
     const user = await User.findOne({ email });
 
-    if (!user) {
-      return res.status(404).json({ error: 'No account found with that email address.' });
+    if (user) {
+      const resetToken = generateOTP();
+      user.resetPasswordToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+      user.resetPasswordExpires = Date.now() + 15 * 60 * 1000; // 15 mins
+      await user.save();
+
+      await sendResetPasswordEmail(user.email, resetToken);
     }
-
-    const resetToken = generateOTP();
-    user.resetPasswordToken = crypto.createHash('sha256').update(resetToken).digest('hex');
-    user.resetPasswordExpires = Date.now() + 15 * 60 * 1000; // 15 mins
-    await user.save();
-
-    await sendResetPasswordEmail(user.email, resetToken);
 
     res.status(200).json({ message: 'If an account exists, a reset code was sent' });
   } catch (error) {

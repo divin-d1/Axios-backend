@@ -94,7 +94,7 @@ const normalizeCandidateRow = (row, aiMappings = null) => {
 
   // --- Work History ---
   // Hackathon CSV: "Role at Company (YYYY-YYYY) | Role at Company (YYYY-YYYY)"
-  const workHistoryRaw = findValue('workhistory', 'work_history', 'employment', 'experience', 'jobhistory', 'work experience');
+  const workHistoryRaw = findValue('workhistory', 'work_history', 'employment', 'experience', 'jobhistory', 'work experience', 'previousroles', 'previous_roles');
   let experienceArray = [];
   if (workHistoryRaw) {
     const entries = workHistoryRaw.split(/\s*\|\s*/);
@@ -186,10 +186,10 @@ const normalizeCandidateRow = (row, aiMappings = null) => {
   return {
     firstName: first || 'Unknown',
     lastName: last || 'Unknown',
-    email: findValue('email', 'emailaddress', 'e-mail', 'contact', 'contactemail', 'mail'),
-    headline: findValue('headline', 'currenttitle', 'current_title', 'title', 'jobtitle', 'summary', 'role', 'currentrole', 'profession', 'position'),
+    email: findValue('email', 'emailaddress', 'e-mail', 'contact', 'contactemail', 'mail') || '',
+    headline: findValue('headline', 'currenttitle', 'current_title', 'title', 'jobtitle', 'summary', 'role', 'currentrole', 'profession', 'position') || '',
     bio: findValue('bio', 'summary', 'about', 'covernote', 'cover_note', 'profile', 'objective'),
-    location: findValue('location', 'city', 'address', 'country', 'region', 'state'),
+    location: findValue('location', 'city', 'address', 'country', 'region', 'state') || '',
     
     skills: skillsObjects,
     languages: languagesArray,

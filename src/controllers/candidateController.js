@@ -179,7 +179,13 @@ const uploadResume = async (req, res, next) => {
       });
     };
 
-    const cloudinaryResult = await uploadToCloudinary();
+    let cloudinaryResult = { secure_url: '' };
+    try {
+      cloudinaryResult = await uploadToCloudinary();
+    } catch (cloudinaryError) {
+      console.warn('Cloudinary upload failed, proceeding without mapped resume file URL.', cloudinaryError);
+    }
+    
     const parsedData = await parseResume(resumeText);
 
     const session = await mongoose.startSession();

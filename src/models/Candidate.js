@@ -4,10 +4,10 @@ const candidateSchema = new mongoose.Schema({
   // 3.1 Basic Information
   firstName: { type: String, required: true },
   lastName: { type: String, required: true },
-  email: { type: String, required: true },
-  headline: { type: String, required: true },
+  email: { type: String },
+  headline: { type: String },
   bio: { type: String },
-  location: { type: String, required: true },
+  location: { type: String },
 
   // 3.2 Skills & Languages
   skills: [{
