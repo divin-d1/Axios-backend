@@ -93,21 +93,27 @@ const generateShortlistEmail = ({ candidateName, jobTitle, companyName, rank, sc
   return {
     subject: `Application Update: ${jobTitle} at ${companyName}`,
     html: `
-      <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 12px 12px 0 0; text-align: center;">
-          <h1 style="color: white; margin: 0; font-size: 24px;">🎉 Congratulations!</h1>
-        </div>
-        <div style="background: #ffffff; padding: 30px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 12px 12px;">
-          <p style="color: #374151; font-size: 16px;">Dear <strong>${candidateName}</strong>,</p>
-          <p style="color: #374151; font-size: 16px;">We are pleased to inform you that you have been <strong>shortlisted</strong> for the position of <strong>${jobTitle}</strong> at <strong>${companyName}</strong>.</p>
-          <div style="background: #f3f4f6; padding: 20px; border-radius: 8px; margin: 20px 0;">
-            <p style="margin: 5px 0; color: #4b5563;"><strong>📊 Match Score:</strong> ${score}/100</p>
-            <p style="margin: 5px 0; color: #4b5563;"><strong>🏆 Rank:</strong> #${rank}</p>
+      <div style="margin:0; padding:40px 0; background-color:#f2f2f2; font-family:Arial, sans-serif;">
+        <div style="max-width:600px; margin:0 auto; background-color:#ffffff; border-radius:12px; overflow:hidden;">
+          <div style="background-color:#000000; padding:35px; text-align:center;">
+            <span style="color:#ffffff; font-size:22px; font-weight:bold; letter-spacing:2px;">AXIOS</span>
           </div>
-          ${nextSteps ? `<p style="color: #374151; font-size: 16px;"><strong>Next Steps:</strong> ${nextSteps}</p>` : ''}
-          <p style="color: #6b7280; font-size: 14px; margin-top: 30px;">Best regards,<br><strong>${companyName} Recruitment Team</strong></p>
+          <div style="padding:40px 35px; color:#222222;">
+            <h1 style="margin-top:0; margin-bottom:24px; font-size:30px; text-align:center; color:#000000;">Candidate Shortlisted</h1>
+            <p style="font-size:16px; line-height:1.8; margin-bottom:18px;">Hello <strong>${candidateName}</strong>,</p>
+            <p style="font-size:16px; line-height:1.8; margin-bottom:18px;">We are pleased to let you know that you have been shortlisted for the <strong>${jobTitle}</strong> role at <strong>${companyName}</strong>.</p>
+            <p style="font-size:16px; line-height:1.8; margin-bottom:18px;">Your profile matched key requirements identified during our evaluation process, including experience, skills, and role alignment.</p>
+            <div style="background-color:#f7f7f7; border-left:4px solid #000000; padding:18px; margin:30px 0;">
+              <p style="margin:0 0 8px 0; font-size:15px; line-height:1.7; color:#444444;">${nextSteps || 'Our recruitment team will contact you soon regarding the next stage of the hiring process.'}</p>
+              <p style="margin:0; font-size:13px; color:#888888;">Match Score: <strong>${score}/100</strong> &nbsp;·&nbsp; Rank: <strong>#${rank}</strong></p>
+            </div>
+            <p style="font-size:16px; line-height:1.8; margin-bottom:0;">Thank you for your interest in joining <strong>${companyName}</strong>.</p>
+            <p style="font-size:16px; line-height:1.8; margin-top:30px;">Best regards,<br /><strong>The ${companyName} Hiring Team</strong></p>
+          </div>
+          <div style="background-color:#fafafa; border-top:1px solid #e5e5e5; padding:20px; text-align:center;">
+            <p style="margin:0; font-size:13px; color:#777777; line-height:1.6;">This is an automated notification regarding your recent application at ${companyName}.</p>
+          </div>
         </div>
-        <p style="color: #9ca3af; font-size: 12px; text-align: center; margin-top: 16px;">Powered by Axios AI Recruitment System</p>
       </div>
     `,
   };

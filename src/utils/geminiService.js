@@ -30,15 +30,24 @@ const initGemini = () => {
   return new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 };
 
-// Safe model name — strip anything that looks like an old/invalid version suffix
-const SAFE_MODELS = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-2.5-flash'];
+// Safe model name — only allow known valid models
+const VALID_MODELS = [
+  'gemini-2.0-flash',
+  'gemini-1.5-flash',
+  'gemini-2.5-flash',
+  'gemini-2.0-flash-lite',
+  'gemini-1.5-pro',
+];
+
 const resolveModelName = () => {
-  const envModel = (process.env.GEMINI_MODEL || '').trim();
-  // Reject known broken model names
-  if (!envModel || envModel.includes('1.5-flash-002') || envModel.includes('1.0')) {
-    return 'gemini-2.0-flash';
+  const envModel = (process.env.GEMINI_MODEL || '').trim().toLowerCase();
+  // Check if it's a known valid model
+  if (VALID_MODELS.includes(envModel)) {
+    return envModel;
   }
-  return envModel;
+  // Default to most stable free-tier model
+  console.warn(`GEMINI_MODEL="${process.env.GEMINI_MODEL}" is not a recognized model. Defaulting to gemini-2.0-flash.`);
+  return 'gemini-2.0-flash';
 };
 
 const getModel = (generationConfig = {}) => {
@@ -160,10 +169,10 @@ const generateContentWithRetries = async (model, prompt) => {
 
       // 404 — model not found, immediately switch to stable fallback
       if (status === 404) {
-        console.warn(`Gemini model not found (404), switching to gemini-2.0-flash fallback...`);
+        console.warn(`Gemini model not found (404), switching to gemini-1.5-flash fallback...`);
         const genAI = initGemini();
         const fallbackModel = genAI.getGenerativeModel({
-          model: 'gemini-2.0-flash',
+          model: 'gemini-1.5-flash',
           generationConfig: model.generationConfig || {}
         });
         return await fallbackModel.generateContent(prompt);
@@ -173,10 +182,10 @@ const generateContentWithRetries = async (model, prompt) => {
       if (isTransientError(error)) {
         if (attempt === maxRetries) {
           // Last resort: try stable model before giving up
-          console.warn('Gemini 503 exhausted retries, trying gemini-2.0-flash as last resort...');
+          console.warn('Gemini 503 exhausted retries, trying gemini-1.5-flash as last resort...');
           const genAI = initGemini();
           const fallbackModel = genAI.getGenerativeModel({
-            model: 'gemini-2.0-flash',
+            model: 'gemini-1.5-flash',
             generationConfig: model.generationConfig || {}
           });
           return await fallbackModel.generateContent(prompt);
@@ -192,7 +201,25 @@ const generateContentWithRetries = async (model, prompt) => {
       }
 
       const quotaError = toQuotaError(error);
-      if (quotaError.dailyLimitExceeded || attempt === maxRetries) {
+
+      // On daily quota exhaustion, try fallback model before giving up
+      if (quotaError.dailyLimitExceeded) {
+        const currentModel = resolveModelName();
+        const fallbackModel = currentModel === 'gemini-1.5-flash' ? 'gemini-2.0-flash' : 'gemini-1.5-flash';
+        console.warn(`Daily quota exhausted on ${currentModel}, trying ${fallbackModel}...`);
+        try {
+          const genAI = initGemini();
+          const altModel = genAI.getGenerativeModel({
+            model: fallbackModel,
+            generationConfig: model.generationConfig || {}
+          });
+          return await altModel.generateContent(prompt);
+        } catch (fallbackError) {
+          throw quotaError; // both models exhausted
+        }
+      }
+
+      if (attempt === maxRetries) {
         throw quotaError;
       }
 
@@ -440,6 +467,12 @@ ${JSON.stringify(candidateSnapshots)}
  * Generate a personalized summary for a specific candidate match
  */
 const generateCandidateSummary = async (candidate, job) => {
+  // Summary generation disabled by default to preserve quota for screening.
+  // Enable by setting GEMINI_ENABLE_SUMMARY=true in env.
+  if (String(process.env.GEMINI_ENABLE_SUMMARY || '').toLowerCase() !== 'true') {
+    return 'Candidate aligns with some core role signals.';
+  }
+
   if (String(process.env.GEMINI_DISABLE_SUMMARY || '').toLowerCase() === 'true') {
     return 'Candidate aligns with some core role signals.';
   }
@@ -471,7 +504,9 @@ const generateCandidateSummary = async (candidate, job) => {
  * returning a mapping configuration that can be safely applied to 10k+ rows locally.
  */
 const analyzeCSVStructure = async (sampleRows) => {
-  if (String(process.env.GEMINI_DISABLE_CSV_MAPPING || '').toLowerCase() === 'true') {
+  // CSV mapping via Gemini is disabled by default — it burns token quota for minimal gain.
+  // Enable by setting GEMINI_ENABLE_CSV_MAPPING=true in env.
+  if (String(process.env.GEMINI_ENABLE_CSV_MAPPING || '').toLowerCase() !== 'true') {
     return null;
   }
 
