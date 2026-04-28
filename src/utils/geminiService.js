@@ -33,19 +33,15 @@ const initGemini = () => {
 // Safe model name — only allow known valid models
 const VALID_MODELS = [
   'gemini-2.0-flash',
-  'gemini-1.5-flash',
-  'gemini-2.5-flash',
   'gemini-2.0-flash-lite',
-  'gemini-1.5-pro',
+  'gemini-2.5-flash-preview-04-17',
 ];
 
 const resolveModelName = () => {
   const envModel = (process.env.GEMINI_MODEL || '').trim().toLowerCase();
-  // Check if it's a known valid model
   if (VALID_MODELS.includes(envModel)) {
     return envModel;
   }
-  // Default to most stable free-tier model
   console.warn(`GEMINI_MODEL="${process.env.GEMINI_MODEL}" is not a recognized model. Defaulting to gemini-2.0-flash.`);
   return 'gemini-2.0-flash';
 };
@@ -159,7 +155,7 @@ const toQuotaError = (error) => {
 };
 
 const generateContentWithRetries = async (model, prompt) => {
-  const maxRetries = intFromEnv('GEMINI_MAX_RETRIES', 4);
+  const maxRetries = intFromEnv('GEMINI_MAX_RETRIES', 2);
 
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
     try {
@@ -169,10 +165,10 @@ const generateContentWithRetries = async (model, prompt) => {
 
       // 404 — model not found, immediately switch to stable fallback
       if (status === 404) {
-        console.warn(`Gemini model not found (404), switching to gemini-1.5-flash fallback...`);
+        console.warn(`Gemini model not found (404), switching to gemini-2.0-flash-lite fallback...`);
         const genAI = initGemini();
         const fallbackModel = genAI.getGenerativeModel({
-          model: 'gemini-1.5-flash',
+          model: 'gemini-2.0-flash-lite',
           generationConfig: model.generationConfig || {}
         });
         return await fallbackModel.generateContent(prompt);
@@ -182,10 +178,10 @@ const generateContentWithRetries = async (model, prompt) => {
       if (isTransientError(error)) {
         if (attempt === maxRetries) {
           // Last resort: try stable model before giving up
-          console.warn('Gemini 503 exhausted retries, trying gemini-1.5-flash as last resort...');
+          console.warn('Gemini 503 exhausted retries, trying gemini-2.0-flash-lite as last resort...');
           const genAI = initGemini();
           const fallbackModel = genAI.getGenerativeModel({
-            model: 'gemini-1.5-flash',
+            model: 'gemini-2.0-flash-lite',
             generationConfig: model.generationConfig || {}
           });
           return await fallbackModel.generateContent(prompt);
@@ -205,7 +201,9 @@ const generateContentWithRetries = async (model, prompt) => {
       // On daily quota exhaustion, try fallback model before giving up
       if (quotaError.dailyLimitExceeded) {
         const currentModel = resolveModelName();
-        const fallbackModel = currentModel === 'gemini-1.5-flash' ? 'gemini-2.0-flash' : 'gemini-1.5-flash';
+        const fallbackModel = currentModel === 'gemini-2.0-flash-lite'
+          ? 'gemini-2.0-flash'
+          : 'gemini-2.0-flash-lite';
         console.warn(`Daily quota exhausted on ${currentModel}, trying ${fallbackModel}...`);
         try {
           const genAI = initGemini();
@@ -215,7 +213,7 @@ const generateContentWithRetries = async (model, prompt) => {
           });
           return await altModel.generateContent(prompt);
         } catch (fallbackError) {
-          throw quotaError; // both models exhausted
+          throw quotaError;
         }
       }
 
@@ -320,8 +318,9 @@ const parseResume = async (resumeText) => {
     maxOutputTokens: intFromEnv('GEMINI_RESUME_MAX_OUTPUT_TOKENS', 1800)
   });
 
-  const trimmedResumeText = squeezeText(resumeText, intFromEnv('RESUME_PARSE_MAX_CHARS', 12000));
-  const cacheKey = hashPayload({ type: 'resume', trimmedResumeText });
+  const trimmedResumeText = squeezeText(resumeText, intFromEnv('RESUME_PARSE_MAX_CHARS', 4000));
+  const fingerprint = trimmedResumeText.slice(0, 300) + trimmedResumeText.length;
+  const cacheKey = hashPayload({ type: 'resume', fingerprint });
 
   if (resumeCache.has(cacheKey)) {
     return resumeCache.get(cacheKey);
@@ -467,12 +466,7 @@ ${JSON.stringify(candidateSnapshots)}
  * Generate a personalized summary for a specific candidate match
  */
 const generateCandidateSummary = async (candidate, job) => {
-  // Summary generation disabled by default to preserve quota for screening.
-  // Enable by setting GEMINI_ENABLE_SUMMARY=true in env.
-  if (String(process.env.GEMINI_ENABLE_SUMMARY || '').toLowerCase() !== 'true') {
-    return 'Candidate aligns with some core role signals.';
-  }
-
+  // Skip if explicitly disabled
   if (String(process.env.GEMINI_DISABLE_SUMMARY || '').toLowerCase() === 'true') {
     return 'Candidate aligns with some core role signals.';
   }
@@ -504,9 +498,8 @@ const generateCandidateSummary = async (candidate, job) => {
  * returning a mapping configuration that can be safely applied to 10k+ rows locally.
  */
 const analyzeCSVStructure = async (sampleRows) => {
-  // CSV mapping via Gemini is disabled by default — it burns token quota for minimal gain.
-  // Enable by setting GEMINI_ENABLE_CSV_MAPPING=true in env.
-  if (String(process.env.GEMINI_ENABLE_CSV_MAPPING || '').toLowerCase() !== 'true') {
+  // Skip if explicitly disabled
+  if (String(process.env.GEMINI_DISABLE_CSV_MAPPING || '').toLowerCase() === 'true') {
     return null;
   }
 

@@ -145,67 +145,92 @@ const triggerScreening = async (req, res, next) => {
     // Clear previous screening results for this job
     await ScreeningResult.deleteMany({ job: job._id });
 
-    const localResults = candidates.map((candidate) => ({
-      ...buildLocalScreeningResult(job, candidate, company),
-      evaluationMode: 'local-fallback'
-    }));
-    const localResultsById = new Map(localResults.map((result) => [String(result.candidateId), result]));
+    // Build candidate map for reference
     const candidateById = new Map(candidates.map((candidate) => [String(candidate._id), candidate]));
 
-    const rankedLocalResults = [...localResults].sort((a, b) => (
-      b.overallScore - a.overallScore ||
-      b.skillMatchScore - a.skillMatchScore ||
-      b.experienceScore - a.experienceScore
-    ));
-
-    const geminiPoolSize = getGeminiPoolSize(job.shortlistSize, rankedLocalResults.length);
-    const geminiCandidates = rankedLocalResults
-      .slice(0, geminiPoolSize)
-      .map((result) => candidateById.get(String(result.candidateId)))
-      .filter(Boolean);
-
-    console.log(`Local scoring complete. Total candidates: ${candidates.length}. Gemini refinement pool: ${geminiCandidates.length}.`);
-
     const BATCH_SIZE = Math.max(1, Number(process.env.GEMINI_SCREENING_BATCH_SIZE || 8));
-    const BATCH_DELAY_MS = Math.max(0, Number(process.env.GEMINI_SCREENING_BATCH_DELAY_MS || 8000));
-    const finalResultsById = new Map(localResultsById);
+    const BATCH_DELAY_MS = Math.max(0, Number(process.env.GEMINI_SCREENING_BATCH_DELAY_MS || 3000));
+    const finalResultsById = new Map();
     let geminiQuotaFallback = false;
     let geminiEvaluatedCandidates = 0;
 
-    for (let i = 0; i < geminiCandidates.length; i += BATCH_SIZE) {
-      const batch = geminiCandidates.slice(i, i + BATCH_SIZE);
+    // ── Step 1: Try Gemini FIRST on ALL candidates ──────────────────────────
+    console.log(`Starting AI screening for ${candidates.length} candidates...`);
+
+    for (let i = 0; i < candidates.length; i += BATCH_SIZE) {
+      const batch = candidates.slice(i, i + BATCH_SIZE);
 
       try {
-        console.log(`Sending AI Batch ${Math.floor(i / BATCH_SIZE) + 1} to native Gemini SDK...`);
-        const aiResults = await screenCandidates(job, batch, company, localResultsById);
+        console.log(`Sending AI Batch ${Math.floor(i / BATCH_SIZE) + 1} to Gemini...`);
+        const aiResults = await screenCandidates(job, batch, company, new Map());
 
         aiResults.forEach((aiResult) => {
-          const candidateId = String(aiResult.candidateId);
-          const fallbackResult = finalResultsById.get(candidateId);
-
-          if (!fallbackResult) {
-            return;
-          }
-
-          finalResultsById.set(candidateId, mergeScreeningResult(fallbackResult, aiResult));
+          finalResultsById.set(String(aiResult.candidateId), {
+            ...aiResult,
+            evaluationMode: 'gemini'
+          });
         });
 
         geminiEvaluatedCandidates += batch.length;
 
-        if (i + BATCH_SIZE < geminiCandidates.length && BATCH_DELAY_MS > 0) {
-          console.log(`Batch complete. Cooling down API connection for ${BATCH_DELAY_MS}ms to prevent 429 errors...`);
+        if (i + BATCH_SIZE < candidates.length && BATCH_DELAY_MS > 0) {
           await new Promise((resolve) => setTimeout(resolve, BATCH_DELAY_MS));
         }
       } catch (error) {
-        console.error(`Batch ${Math.floor(i / BATCH_SIZE) + 1} screening error:`, error.message);
+        console.error(`Batch ${Math.floor(i / BATCH_SIZE) + 1} AI error:`, error.message);
 
         if (error.code === 'GEMINI_QUOTA_EXCEEDED') {
           geminiQuotaFallback = true;
-          console.warn('Gemini quota exhausted. Remaining candidates will keep local heuristic scores for this run.');
+          console.warn('Gemini quota exhausted. Falling back to local heuristics for remaining candidates.');
+          // Fall back remaining candidates that weren't processed
+          batch.forEach((candidate) => {
+            if (!finalResultsById.has(String(candidate._id))) {
+              const localResult = buildLocalScreeningResult(job, candidate, company);
+              finalResultsById.set(String(candidate._id), {
+                ...localResult,
+                evaluationMode: 'local-fallback'
+              });
+            }
+          });
+          // Process remaining batches with local scoring
+          for (let j = i + BATCH_SIZE; j < candidates.length; j += BATCH_SIZE) {
+            const remainingBatch = candidates.slice(j, j + BATCH_SIZE);
+            remainingBatch.forEach((candidate) => {
+              const localResult = buildLocalScreeningResult(job, candidate, company);
+              finalResultsById.set(String(candidate._id), {
+                ...localResult,
+                evaluationMode: 'local-fallback'
+              });
+            });
+          }
           break;
         }
+
+        // For non-quota errors (404, 503 exhausted), fall back this batch to local
+        console.warn(`AI failed for batch, using local fallback for ${batch.length} candidates.`);
+        batch.forEach((candidate) => {
+          if (!finalResultsById.has(String(candidate._id))) {
+            const localResult = buildLocalScreeningResult(job, candidate, company);
+            finalResultsById.set(String(candidate._id), {
+              ...localResult,
+              evaluationMode: 'local-fallback'
+            });
+          }
+        });
+        geminiQuotaFallback = true;
       }
     }
+
+    // ── Step 2: Ensure every candidate has a result (safety net) ────────────
+    candidates.forEach((candidate) => {
+      if (!finalResultsById.has(String(candidate._id))) {
+        const localResult = buildLocalScreeningResult(job, candidate, company);
+        finalResultsById.set(String(candidate._id), {
+          ...localResult,
+          evaluationMode: 'local-fallback'
+        });
+      }
+    });
 
     const allResults = Array.from(finalResultsById.values()).map(stripInternalFields);
 
