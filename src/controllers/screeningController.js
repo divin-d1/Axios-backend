@@ -240,74 +240,89 @@ const triggerScreening = async (req, res, next) => {
       b.experienceScore - a.experienceScore
     ));
 
+    const screeningDocs = allResults.map((result, index) => {
+      const rank = index + 1;
+      return {
+        job: job._id,
+        candidate: result.candidateId,
+        overallScore: Math.round(result.overallScore) || 0,
+        skillMatchScore: Math.round(result.skillMatchScore) || 0,
+        experienceScore: Math.round(result.experienceScore) || 0,
+        projectScore: Math.round(result.projectScore) || 0,
+        credibilityScore: Math.round(result.credibilityScore) || 0,
+        companyFitScore: Math.round(result.companyFitScore) || 0,
+        rank,
+        isShortlisted: rank <= job.shortlistSize,
+        strengths: result.strengths || [],
+        weaknesses: result.weaknesses || [],
+        recommendation: result.recommendation || 'consider',
+        reasoning: result.reasoning || '',
+        skillAnalysis: result.skillAnalysis || '',
+        experienceAnalysis: result.experienceAnalysis || '',
+        evaluationMode: result.evaluationMode || 'local-fallback',
+      };
+    });
+
+    // ── Persist results in a transaction ────────────────────────────────────
     const session = await mongoose.startSession();
-    session.startTransaction();
-
+    let screeningResults;
     try {
-      const screeningDocs = allResults.map((result, index) => {
-        const rank = index + 1;
+      session.startTransaction();
 
-        return {
-          job: job._id,
-          candidate: result.candidateId,
-          overallScore: Math.round(result.overallScore) || 0,
-          skillMatchScore: Math.round(result.skillMatchScore) || 0,
-          experienceScore: Math.round(result.experienceScore) || 0,
-          projectScore: Math.round(result.projectScore) || 0,
-          credibilityScore: Math.round(result.credibilityScore) || 0,
-          companyFitScore: Math.round(result.companyFitScore) || 0,
-          rank,
-          isShortlisted: rank <= job.shortlistSize,
-          strengths: result.strengths || [],
-          weaknesses: result.weaknesses || [],
-          recommendation: result.recommendation || 'consider',
-          reasoning: result.reasoning || '',
-          skillAnalysis: result.skillAnalysis || '',
-          experienceAnalysis: result.experienceAnalysis || '',
-          evaluationMode: result.evaluationMode || 'local-fallback',
-        };
-      });
+      screeningResults = await ScreeningResult.insertMany(screeningDocs, { session });
 
-      const screeningResults = await ScreeningResult.insertMany(screeningDocs, { session });
-
-      // Update job status to completed
-      job.status = 'completed';
-      job.screenedAt = new Date();
-      await job.save({ session });
+      // Update job status to completed inside the transaction
+      await Job.findByIdAndUpdate(
+        job._id,
+        { status: 'completed', screenedAt: new Date() },
+        { session }
+      );
 
       await session.commitTransaction();
-      session.endSession();
-
-      const screeningMeta = buildScreeningMeta(screeningResults, {
-        totalResults: screeningResults.length,
-        shortlistedResults: screeningResults.filter((result) => result.isShortlisted).length
-      });
-
-      const rateLimitMessage = aiRateLimitFallback
-        ? ' Groq rate limit hit during this run, so remaining candidates used the local fallback scorer.'
-        : '';
-
-      releaseCompanyScreeningLock(lockCompanyId);
-      lockAcquired = false;
-
-      res.json({
-        success: true,
-        message: `Screening completed. ${screeningResults.length} candidates evaluated, top ${job.shortlistSize} shortlisted.${rateLimitMessage}`,
-        data: {
-          totalEvaluated: screeningResults.length,
-          shortlistSize: job.shortlistSize,
-          groqEvaluatedCandidates,
-          usedLocalFallback: aiRateLimitFallback,
-          results: screeningResults,
-          meta: screeningMeta,
-        },
-      });
     } catch (transactionError) {
-      await session.abortTransaction();
-      session.endSession();
+      // Only abort if the transaction is still active (not yet committed)
+      if (session.inTransaction()) {
+        await session.abortTransaction();
+      }
+      // Reset job status back to open so the user can retry
+      await Job.findByIdAndUpdate(job._id, { status: 'open' }).catch(() => {});
       throw transactionError;
+    } finally {
+      session.endSession();
     }
+
+    const screeningMeta = buildScreeningMeta(screeningResults, {
+      totalResults: screeningResults.length,
+      shortlistedResults: screeningResults.filter((result) => result.isShortlisted).length
+    });
+
+    const rateLimitMessage = aiRateLimitFallback
+      ? ' Some candidates were scored using local heuristics due to AI rate limits.'
+      : '';
+
+    releaseCompanyScreeningLock(lockCompanyId);
+    lockAcquired = false;
+
+    res.json({
+      success: true,
+      message: `Screening completed. ${screeningResults.length} candidates evaluated, top ${job.shortlistSize} shortlisted.${rateLimitMessage}`,
+      data: {
+        totalEvaluated: screeningResults.length,
+        shortlistSize: job.shortlistSize,
+        groqEvaluatedCandidates,
+        usedLocalFallback: aiRateLimitFallback,
+        results: screeningResults,
+        meta: screeningMeta,
+      },
+    });
   } catch (error) {
+    // If job got stuck in 'screening' state due to an error, reset it back to 'open'
+    if (req.params.jobId) {
+      await Job.findOneAndUpdate(
+        { _id: req.params.jobId, status: 'screening' },
+        { status: 'open' }
+      ).catch(() => {});
+    }
     next(error);
   } finally {
     if (lockAcquired && lockCompanyId) {
