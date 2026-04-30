@@ -60,8 +60,13 @@ const getCandidateInitials = (candidate) => {
 const inferLegacyEvaluationMode = (screeningResult) => {
   const plainResult = toPlainObject(screeningResult) || {};
 
-  if (plainResult.evaluationMode === 'gemini' || plainResult.evaluationMode === 'local-fallback') {
-    return plainResult.evaluationMode;
+  if (
+    plainResult.evaluationMode === 'groq' ||
+    plainResult.evaluationMode === 'gemini' || // legacy DB records
+    plainResult.evaluationMode === 'local-fallback'
+  ) {
+    // Normalise legacy 'gemini' label to 'groq'
+    return plainResult.evaluationMode === 'gemini' ? 'groq' : plainResult.evaluationMode;
   }
 
   const reasoning = String(plainResult.reasoning || '').trim();
@@ -76,7 +81,7 @@ const inferLegacyEvaluationMode = (screeningResult) => {
     return 'local-fallback';
   }
 
-  return 'gemini';
+  return 'groq';
 };
 
 const serializeCandidate = (candidate) => {
@@ -141,16 +146,16 @@ const buildScreeningMeta = (screeningResults, counts = {}) => {
   const normalizedResults = Array.isArray(screeningResults) ? screeningResults : [];
   const evaluationModes = normalizedResults.map((result) => inferLegacyEvaluationMode(result));
   const localFallbackCount = evaluationModes.filter((mode) => mode === 'local-fallback').length;
-  const geminiCount = evaluationModes.filter((mode) => mode === 'gemini').length;
+  const groqCount = evaluationModes.filter((mode) => mode === 'groq').length;
 
   let screeningMode = null;
   if (normalizedResults.length > 0) {
-    if (localFallbackCount > 0 && geminiCount > 0) {
+    if (localFallbackCount > 0 && groqCount > 0) {
       screeningMode = 'hybrid';
     } else if (localFallbackCount > 0) {
       screeningMode = 'local-fallback';
     } else {
-      screeningMode = 'gemini';
+      screeningMode = 'groq';
     }
   }
 

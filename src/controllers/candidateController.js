@@ -3,7 +3,7 @@ const Candidate = require('../models/Candidate');
 const Job = require('../models/Job');
 const ScreeningResult = require('../models/ScreeningResult');
 const { parseCSV, parseExcel, parsePDF, parseCSVRaw, parseExcelRaw, applyAIMappingPattern, normalizeCandidateRow } = require('../utils/fileParser');
-const { parseResume } = require('../utils/geminiService');
+const { parseResume } = require('../utils/groqService');
 const cloudinary = require('../config/cloudinary');
 const streamifier = require('streamifier');
 const path = require('path');
@@ -81,20 +81,20 @@ const bulkUploadCandidates = async (req, res, next) => {
       throw new Error('No data found in the file');
     }
 
-    // 2. Intelligently map CSV structure using Gemini AI
-    const { analyzeCSVStructure } = require('../utils/geminiService');
+    // 2. Intelligently map CSV structure using Groq AI
+    const { analyzeCSVStructure } = require('../utils/groqService');
     let aiMappings = null;
     try {
       if (rawData.length > 0) {
-        console.log("Analyzing unknown CSV structure using Gemini AI...");
+        console.log("Analyzing unknown CSV structure using Groq AI...");
         const mappingResult = await analyzeCSVStructure(rawData.slice(0, 2));
         if (mappingResult && mappingResult.mappings) {
           aiMappings = mappingResult.mappings;
-          console.log("Gemini AI successfully extracted dynamic schema mappings.");
+          console.log("Groq AI successfully extracted dynamic schema mappings.");
         }
       }
     } catch (err) {
-      console.warn("Gemini CSV Analysis failed or rate-limited. Falling back to semantic fuzzy-parser.");
+      console.warn("Groq CSV Analysis failed or rate-limited. Falling back to semantic fuzzy-parser.");
     }
     
     let candidateData = rawData.map(row => normalizeCandidateRow(row, aiMappings)).filter(c => c.firstName && c.lastName);
