@@ -16,11 +16,29 @@ router.post('/setup', protect, async (req, res, next) => {
       return res.status(409).json({ error: 'Onboarding already completed for this account' });
     }
 
-    const { name, email, website, size, industries, departments, hiringPhilosophy, description, specialization, skills } = req.body;
+    const { name, email, website, size, industries, industry, departments, hiringPhilosophy, description, specialization, skills, techStack } = req.body;
 
     if (!name) {
       return res.status(400).json({ error: 'Company name is required' });
     }
+
+    // Resolve tech stack from either 'techStack' or legacy 'skills' field
+    const resolvedTechStack = (() => {
+      const raw = techStack || skills;
+      if (!raw) return [];
+      if (Array.isArray(raw)) return raw.map(s => String(s).trim()).filter(Boolean);
+      if (typeof raw === 'string') return raw.split(',').map(s => s.trim()).filter(Boolean);
+      return [];
+    })();
+
+    // Resolve industry from either 'industry' or 'industries' field
+    const resolvedIndustry = (() => {
+      const raw = industry || industries;
+      if (!raw) return [];
+      if (Array.isArray(raw)) return raw.map(s => String(s).trim()).filter(Boolean);
+      if (typeof raw === 'string') return [raw.trim()].filter(Boolean);
+      return [];
+    })();
 
     const session = await mongoose.startSession();
     session.startTransaction();
@@ -32,12 +50,12 @@ router.post('/setup', protect, async (req, res, next) => {
         email: email || req.user.email,
         website,
         size,
-        industries: industries || [],
+        industry: resolvedIndustry,
         departments: departments || [],
         hiringPhilosophy,
         description,
         specialization,
-        skills: typeof skills === 'string' ? skills.split(',').map(s => s.trim()).filter(Boolean) : (skills || []),
+        techStack: resolvedTechStack,
       }], { session });
 
       // Link company to user

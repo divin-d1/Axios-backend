@@ -2,7 +2,6 @@
 node_modules/
 
 # Environment
-.env
 
 # Uploads
 uploads/
@@ -17,3 +16,4 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+config.bat

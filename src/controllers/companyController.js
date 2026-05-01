@@ -38,9 +38,32 @@ const updateCompany = async (req, res, next) => {
     if (String(req.user.company) !== String(req.params.id)) {
       return res.status(403).json({ error: 'Access denied' });
     }
+
+    // Normalize frontend field names to match Company model schema
+    const updates = { ...req.body };
+
+    // Map 'industries' → 'industry' (model field name)
+    if (updates.industries && !updates.industry) {
+      updates.industry = Array.isArray(updates.industries)
+        ? updates.industries.map((s) => String(s).trim()).filter(Boolean)
+        : [String(updates.industries).trim()].filter(Boolean);
+    }
+    delete updates.industries;
+
+    // Map 'skills' → 'techStack' (model field name)
+    if (updates.skills && !updates.techStack) {
+      const raw = updates.skills;
+      updates.techStack = Array.isArray(raw)
+        ? raw.map((s) => String(s).trim()).filter(Boolean)
+        : typeof raw === 'string'
+          ? raw.split(',').map((s) => s.trim()).filter(Boolean)
+          : [];
+    }
+    delete updates.skills;
+
     const company = await Company.findByIdAndUpdate(
       req.params.id,
-      req.body,
+      updates,
       { new: true, runValidators: true }
     );
     if (!company) {
