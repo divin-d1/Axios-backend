@@ -147,6 +147,14 @@ const triggerScreening = async (req, res, next) => {
     // Build candidate map for reference
     const candidateById = new Map(candidates.map((candidate) => [String(candidate._id), candidate]));
 
+    // ── Pre-compute local heuristic results for ALL candidates ───────────
+    // This gives the AI rich, structured snapshots (skills, years, matched/missing skills)
+    const localResultsById = new Map();
+    candidates.forEach((candidate) => {
+      const localResult = buildLocalScreeningResult(job, candidate, company);
+      localResultsById.set(String(candidate._id), localResult);
+    });
+
     const BATCH_SIZE = Math.max(1, Number(process.env.GROQ_SCREENING_BATCH_SIZE || 8));
     const BATCH_DELAY_MS = Math.max(0, Number(process.env.GROQ_SCREENING_BATCH_DELAY_MS || 3000));
     const finalResultsById = new Map();
@@ -161,7 +169,7 @@ const triggerScreening = async (req, res, next) => {
 
       try {
         console.log(`Sending AI Batch ${Math.floor(i / BATCH_SIZE) + 1}...`);
-        const aiResults = await screenCandidates(job, batch, company, new Map());
+        const aiResults = await screenCandidates(job, batch, company, localResultsById);
 
         aiResults.forEach((aiResult) => {
           finalResultsById.set(String(aiResult.candidateId), {

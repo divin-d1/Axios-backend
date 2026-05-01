@@ -403,29 +403,73 @@ const buildLocalScreeningResult = (job, candidate, company) => {
 };
 
 const buildCandidateAISnapshot = (candidate, localResult) => {
-  const skills = unique(getSkillEntries(candidate).map((skill) => skill.name)).slice(0, 10);
+  const skills = unique(getSkillEntries(candidate).map((skill) => {
+    if (skill.yearsOfExperience > 0) {
+      return `${skill.name} (${skill.yearsOfExperience}y)`;
+    }
+    return skill.name;
+  })).slice(0, 15);
+
   const recentRoles = getExperienceEntries(candidate)
-    .slice(0, 3)
-    .map((experience) => compactText(`${experience.role} ${experience.company}`.trim(), 60))
+    .slice(0, 4)
+    .map((experience) => {
+      const parts = [`${experience.role} at ${experience.company}`.trim()];
+      if (experience.startDate || experience.endDate) {
+        parts.push(`(${experience.startDate || '?'} – ${experience.endDate || 'Present'})`);
+      }
+      if (experience.description) {
+        parts.push(`— ${experience.description}`);
+      }
+      if (experience.technologies.length > 0) {
+        parts.push(`[${experience.technologies.join(', ')}]`);
+      }
+      return compactText(parts.join(' '), 250);
+    })
     .filter(Boolean);
+
   const projectSignals = getProjectEntries(candidate)
-    .slice(0, 2)
-    .map((project) => compactText(
-      [project.name, project.role, project.description, ...project.technologies].filter(Boolean).join(' | '),
-      110
+    .slice(0, 3)
+    .map((project) => {
+      const parts = [project.name];
+      if (project.role) parts.push(`(${project.role})`);
+      if (project.description) parts.push(`— ${project.description}`);
+      if (project.technologies.length > 0) parts.push(`[${project.technologies.join(', ')}]`);
+      return compactText(parts.filter(Boolean).join(' '), 200);
+    })
+    .filter(Boolean);
+
+  const education = toArray(candidate?.education)
+    .slice(0, 3)
+    .map((edu) => compactText(
+      [edu?.degree, edu?.fieldOfStudy, edu?.institution, edu?.endYear ? `(${edu.endYear})` : '']
+        .filter(Boolean).join(' — '),
+      120
+    ))
+    .filter(Boolean);
+
+  const certifications = toArray(candidate?.certifications)
+    .slice(0, 3)
+    .map((cert) => compactText(
+      [cert?.name, cert?.issuer].filter(Boolean).join(' from '),
+      80
     ))
     .filter(Boolean);
 
   return {
     id: String(candidate._id),
-    headline: compactText(candidate?.headline || '', 80),
-    years: localResult?._localMeta?.estimatedYears || 0,
+    name: compactText(`${candidate?.firstName || ''} ${candidate?.lastName || ''}`.trim(), 60),
+    headline: compactText(candidate?.headline || '', 100),
+    bio: compactText(candidate?.bio || '', 200),
+    location: compactText(candidate?.location || '', 60),
+    years: localResult?._localMeta?.estimatedYears || estimateExperienceYears(candidate) || 0,
     localScore: roundScore(localResult?.overallScore || 0),
-    matchedRequired: toArray(localResult?._localMeta?.matchedRequiredSkills).slice(0, 8),
-    missingRequired: toArray(localResult?._localMeta?.missingRequiredSkills).slice(0, 5),
+    matchedRequired: toArray(localResult?._localMeta?.matchedRequiredSkills).slice(0, 10),
+    missingRequired: toArray(localResult?._localMeta?.missingRequiredSkills).slice(0, 10),
     skills,
     recentRoles,
     projectSignals,
+    education,
+    certifications,
     credibility: roundScore(localResult?.credibilityScore || 0)
   };
 };
