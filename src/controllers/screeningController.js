@@ -12,15 +12,15 @@ const getLatestCandidateMutation = (candidates) => candidates.reduce((latest, ca
   return Math.max(latest, candidateTimestamp);
 }, 0);
 
-const getGeminiPoolSize = (shortlistSize, totalCandidates) => {
-  const mode = String(process.env.GEMINI_SCREENING_REFINE_POOL_MODE || 'shortlist-only').toLowerCase();
+const getAIPoolSize = (shortlistSize, totalCandidates) => {
+  const mode = String(process.env.AI_SCREENING_REFINE_POOL_MODE || process.env.GEMINI_SCREENING_REFINE_POOL_MODE || 'shortlist-only').toLowerCase();
   if (mode === 'shortlist-only') {
     return Math.min(totalCandidates, Math.max(1, Number(shortlistSize) || 1));
   }
 
-  const multiplier = Math.max(1, Number(process.env.GEMINI_AI_POOL_MULTIPLIER || 2));
-  const minPool = Math.max(shortlistSize, Number(process.env.GEMINI_AI_POOL_MIN || 12));
-  const maxPool = Math.max(shortlistSize, Number(process.env.GEMINI_AI_POOL_MAX || 36));
+  const multiplier = Math.max(1, Number(process.env.AI_POOL_MULTIPLIER || process.env.GEMINI_AI_POOL_MULTIPLIER || 2));
+  const minPool = Math.max(shortlistSize, Number(process.env.AI_POOL_MIN || process.env.GEMINI_AI_POOL_MIN || 12));
+  const maxPool = Math.max(shortlistSize, Number(process.env.AI_POOL_MAX || process.env.GEMINI_AI_POOL_MAX || 36));
   const desiredPool = Math.ceil(shortlistSize * multiplier);
 
   return Math.min(totalCandidates, Math.max(minPool, Math.min(maxPool, desiredPool)));
@@ -58,7 +58,7 @@ const mergeScreeningResult = (fallbackResult, aiResult) => ({
   ...fallbackResult,
   ...aiResult,
   candidateId: fallbackResult.candidateId,
-  evaluationMode: 'groq',  strengths: Array.isArray(aiResult?.strengths) && aiResult.strengths.length > 0 ? aiResult.strengths : fallbackResult.strengths,
+  evaluationMode: 'ai',  strengths: Array.isArray(aiResult?.strengths) && aiResult.strengths.length > 0 ? aiResult.strengths : fallbackResult.strengths,
   weaknesses: Array.isArray(aiResult?.weaknesses) && aiResult.weaknesses.length > 0 ? aiResult.weaknesses : fallbackResult.weaknesses,
   reasoning: aiResult?.reasoning || fallbackResult.reasoning,
   recommendation: aiResult?.recommendation || fallbackResult.recommendation,
@@ -151,26 +151,26 @@ const triggerScreening = async (req, res, next) => {
     const BATCH_DELAY_MS = Math.max(0, Number(process.env.GROQ_SCREENING_BATCH_DELAY_MS || 3000));
     const finalResultsById = new Map();
     let aiRateLimitFallback = false;
-    let groqEvaluatedCandidates = 0;
+    let aiEvaluatedCandidates = 0;
 
-    // ── Step 1: Try Groq FIRST on ALL candidates ──────────────────────────
+    // ── Step 1: Try AI FIRST on ALL candidates ───────────────────────────
     console.log(`Starting AI screening for ${candidates.length} candidates...`);
 
     for (let i = 0; i < candidates.length; i += BATCH_SIZE) {
       const batch = candidates.slice(i, i + BATCH_SIZE);
 
       try {
-        console.log(`Sending AI Batch ${Math.floor(i / BATCH_SIZE) + 1} to Groq...`);
+        console.log(`Sending AI Batch ${Math.floor(i / BATCH_SIZE) + 1}...`);
         const aiResults = await screenCandidates(job, batch, company, new Map());
 
         aiResults.forEach((aiResult) => {
           finalResultsById.set(String(aiResult.candidateId), {
             ...aiResult,
-            evaluationMode: 'groq'
+            evaluationMode: 'ai'
           });
         });
 
-        groqEvaluatedCandidates += batch.length;
+        aiEvaluatedCandidates += batch.length;
 
         if (i + BATCH_SIZE < candidates.length && BATCH_DELAY_MS > 0) {
           await new Promise((resolve) => setTimeout(resolve, BATCH_DELAY_MS));
@@ -180,7 +180,7 @@ const triggerScreening = async (req, res, next) => {
 
         if (error.code === 'GROQ_RATE_LIMIT') {
           aiRateLimitFallback = true;
-          console.warn('Groq rate limit hit. Falling back to local heuristics for remaining candidates.');
+          console.warn('AI rate limit hit. Falling back to local heuristics for remaining candidates.');
           // Fall back remaining candidates that weren't processed
           batch.forEach((candidate) => {
             if (!finalResultsById.has(String(candidate._id))) {
@@ -309,7 +309,7 @@ const triggerScreening = async (req, res, next) => {
       data: {
         totalEvaluated: screeningResults.length,
         shortlistSize: job.shortlistSize,
-        groqEvaluatedCandidates,
+        aiEvaluatedCandidates,
         usedLocalFallback: aiRateLimitFallback,
         results: screeningResults,
         meta: screeningMeta,

@@ -64,8 +64,8 @@ isShortlisted: {
 
   evaluationMode: {
     type: String,
-    enum: ['gemini', 'local-fallback'],
-    default: 'gemini',
+    enum: ['ai', 'local-fallback'],
+    default: 'ai',
   },
 
   // ─── AI Explainability ───
